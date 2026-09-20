@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+._*
+
+# Editors
+*.swp
+.idea/
+.vscode/
+
+# Local Claude Code state (keep .claude/skills if you ever vendor them here)
+.claude/settings.local.json
+
+# Build/packaging output
+*.zip
