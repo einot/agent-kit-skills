@@ -60,8 +60,11 @@ It uses PyYAML when importable and falls back to a strict parser for the
 to fail on warnings (an unrecognised frontmatter key, a skill the README
 never mentions, a stray file under `skills/`) as well as errors.
 
-`main` is protected: changes land through a pull request whose `validate`
-check has passed.
+The intended flow is that changes land on `main` through a pull request
+whose `validate` check has passed. Note that GitHub's branch protection and
+rulesets are a paid feature on private repositories, so on a free plan this
+is a convention rather than something the server enforces — see
+`.github/PROTECTION.md`.
 
 ## The design in one page
 
