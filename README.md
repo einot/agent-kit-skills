@@ -41,6 +41,28 @@ shared hook and the `CLAUDE.md` governance sections — or invoke a single
 Requires `bash` and `jq` on the machine running the session (the path
 guard is a bash hook that parses its JSON payload with `jq`).
 
+## Developing the skills
+
+Every change is checked by `scripts/validate-skills.py`, which runs in CI on
+every pull request and push to `main`. It asserts that each
+`skills/<name>/SKILL.md` has closed, parseable frontmatter, that its `name`
+is a lowercase-hyphen slug matching its directory, that the `description`
+is present and within the 1024-character limit, and that the body is not
+empty — the failure modes that make a skill silently never load or never
+trigger. Run it yourself before pushing:
+
+```bash
+python3 scripts/validate-skills.py .
+```
+
+It uses PyYAML when importable and falls back to a strict parser for the
+`key: value` subset otherwise, so it needs nothing installed. Add `--strict`
+to fail on warnings (an unrecognised frontmatter key, a skill the README
+never mentions, a stray file under `skills/`) as well as errors.
+
+`main` is protected: changes land through a pull request whose `validate`
+check has passed.
+
 ## The design in one page
 
 - **Separation of write scope.** Exactly one agent may write each kind of
