@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Opt in with:  git config core.hooksPath .githooks
+#
+# Refuses a direct push to main and runs the skill validator before any push.
+# Advisory only: `git push --no-verify` skips it, and it cannot stop anyone
+# pushing from a different clone. Real enforcement is server-side — see
+# .github/PROTECTION.md.
+set -euo pipefail
+
+protected_branch="main"
+repo_root="$(git rev-parse --show-toplevel)"
+zero="0000000000000000000000000000000000000000"
+status=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue    # deletion
+
+    if [ "$remote_ref" = "refs/heads/$protected_branch" ]; then
+        echo "pre-push: refusing to push directly to '$protected_branch'." >&2
+        echo "          Open a pull request instead, or bypass with --no-verify." >&2
+        status=1
+    fi
+
+    if ! python3 "$repo_root/scripts/validate-skills.py" "$repo_root"; then
+        echo "pre-push: skill validation failed; not pushing." >&2
+        status=1
+    fi
+done
+
+exit "$status"
