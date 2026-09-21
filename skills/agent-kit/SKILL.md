@@ -388,9 +388,13 @@ reading a config file.
    no `Agent` tool.
 5. If `security-auditor` has Bash: it is denied a command whose name is
    absent from `ALLOW_CMDS`, and the denial says `bash guard:`.
-6. `reviewer`, `security-auditor` and `supervisor` each return output that
-   parses with `jq`.
-7. `supervisor` catches a worker that touched one file beyond its brief.
+6. `reviewer`, `security-auditor` and `supervisor` each return a final
+   message whose **last JSON object** parses with `jq`. Extract it rather
+   than parsing the whole message: in testing, agents prefixed the JSON
+   with a paragraph often enough that a whole-message parse is not a
+   contract you can build on.
+7. `supervisor` catches a worker that touched one file beyond its brief,
+   *and* stays quiet when given an honest report of an in-scope change.
 8. The top-level session is *not* affected by any of the above — the
    scoping is meant to leave it alone.
 

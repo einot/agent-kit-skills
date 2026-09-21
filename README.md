@@ -126,3 +126,18 @@ See `.github/PROTECTION.md`.
 - Protection against a bad brief: a worker that does exactly what a wrong
   brief said passes every check here.
 - Test quality: clean-room tests encode the spec — including its mistakes.
+
+## What has been verified
+
+[VERIFICATION.md](VERIFICATION.md) records which of this kit's claims were
+tested by dispatching real subagents against a real install, which were
+tested only as guard logic, and which are still untested. It also records
+the two defects that testing found. The kit's own argument is that an
+untested guard is an assumption, so it seemed wrong not to say which of
+these are which.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The point of this bundle is that you copy it
+into your own project and adapt it, so the license is the permissive one
+that lets you.

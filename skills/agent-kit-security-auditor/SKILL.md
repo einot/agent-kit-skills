@@ -300,7 +300,7 @@ and the smoke test that caught it was a `sed` command succeeding with
   a write attempt (`git commit`, a redirect) is denied.
 - **Fenced build:** confirm the top-level session's own Bash is
   unaffected. If it is fenced too, `SCOPE_AGENT_TYPES` is missing.
-- The agent's final message parses as JSON with `jq`.
+- The **last JSON object** in the agent's final message parses with `jq`.
 - Its findings name a concrete request or payload in `failure_scenario` —
   a finding that cannot describe how it is triggered is the
   generic-checklist failure mode this prompt exists to prevent.
@@ -351,6 +351,20 @@ Security review rewards a strong model: the failure mode of a weak one is
 a plausible-looking list of non-issues that costs more to triage than it
 saves. Pin one with a `model:` line and say in the agent file *why*, so a
 later reader does not "fix" the inconsistency with the other agents.
+
+## Parsing the output: extract, don't assume
+
+The JSON-only instruction is a strong default, not a guarantee. In
+testing, both read-only agents prefixed their JSON with a paragraph — one
+summarising its reasoning, one flagging suspicious content it had read and
+ignored. Both were behaving sensibly; neither produced a message that
+`jq` could parse whole.
+
+So the session must **extract the last JSON object in the final message**
+and parse that, rather than feeding the whole message to `jq`. Treat a
+message with no parseable JSON object as a dispatch failure and re-run it;
+do not fall back to reading the prose, because the point of the contract
+is that the session decides mechanically.
 
 ## Using the output
 
