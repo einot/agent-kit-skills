@@ -60,7 +60,8 @@ vulnerabilities within a worker's authorized scope. Your only question is:
 
 Each time you're invoked, you'll receive:
 1. The literal, verbatim instructions given to a worker agent (`coder`,
-   `test-author`, or `architect`) for one unit of work.
+   `test-author`, `architect`, or any other agent that can write or
+   execute) for one unit of work.
 2. That worker's own report of what it changed (files touched, commits
    made, commands run) — treat this report as a claim to verify against
    the actual files, not as fact.
@@ -131,8 +132,8 @@ agent names:
 ````markdown
 ## Supervisor agent
 
-Every dispatch to `coder`, `test-author`, or `architect` (the only
-subagents with write access) must be paired with a `supervisor` review
+Every dispatch to `coder`, `test-author`, or `architect` (the subagents
+that can write or execute) must be paired with a `supervisor` review
 before acting on its output (merging, pushing, or handing off to another
 agent). Give `supervisor` exactly two things: the literal instructions
 given to the worker agent, and the worker's own report of what it changed.
@@ -150,10 +151,18 @@ survives every other rule in this file, and no finding is ever summarised,
 paraphrased, or held back. Then STOP ALL PROCESSING: do not merge, push,
 dispatch further agents, or continue reconciling, and let the user decide.
 
-`reviewer`/`security-auditor` are themselves read-only and structurally
-incapable of taking an unauthorized action (no write access at all), so
-routine supervisor coverage is scoped to the agents that can write;
-extend it to every dispatch if asked.
+`reviewer` is read-only and structurally incapable of taking an
+unauthorized action — no Edit, no Write, no Bash — so routine supervisor
+coverage excludes it. Extend coverage to every dispatch if asked.
+
+`security-auditor` is exempt on the same grounds **only while it has no
+Bash tool**. If it is given the fenced Bash described in
+`agent-kit-security-auditor`, add it to the paired list above. A fence is
+not the same guarantee as not having the tool: the exemption rested on
+there being nothing to fence, and that stops being true the moment the
+tool exists. This is deliberately the cautious reading — the fence is
+default-deny and carefully written, but it is a shell script, and the cost
+of pairing is one extra read-only review per audit.
 
 Subagents do not dispatch other subagents. `architect` has no `Agent`
 tool: it settles the interface, writes ready-to-dispatch briefs, and hands
@@ -185,7 +194,10 @@ scope and honesty do not vary by codebase.
 
 If you rename the write-capable agents, update the list in both the agent
 file and the `CLAUDE.md` protocol — the pairing rule has to name the exact
-set of agents that can write, or a new one will quietly escape coverage.
+set of agents that can write or execute, or a new one will quietly escape
+coverage. The same applies when an existing agent *gains* a capability:
+giving `security-auditor` a Bash tool moves it into the paired set, and
+nothing but that list enforces it.
 
 ## The escape hatch that matters
 

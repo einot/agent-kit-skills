@@ -136,6 +136,8 @@ coder ──diff──▶ reviewer ──────▶ findings JSON ──▶
                 security-auditor ──▶ findings JSON ──┘
 ```
 
-`reviewer` and `security-auditor` are read-only and need no `supervisor`
-pairing; the write-capable agents (`coder`, `test-author`, `architect`)
-always do.
+`reviewer` needs no `supervisor` pairing: with no Edit, no Write and no
+Bash it is structurally incapable of an unauthorized action. The agents
+that can write or execute (`coder`, `test-author`, `architect`) always do.
+`security-auditor` shares `reviewer`'s exemption only while it has no Bash
+tool — see `agent-kit-security-auditor`.
