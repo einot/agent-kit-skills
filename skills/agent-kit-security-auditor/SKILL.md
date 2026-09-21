@@ -129,6 +129,15 @@ with flags after the subcommand (`git log -p`, `git show -c HEAD`); and
 `node` pointed at approved validator scripts, named exactly. Pipelines of
 those are fine.
 
+**`git -C` is refused, and it is the first thing you will reach for.**
+Global options that take a value — `-C`, `-c`, `--git-dir`, `--work-tree`,
+`--namespace`, `--exec-path` — swallow the following token, which moves
+where the guard thinks the subcommand is and would let `core.pager` or
+`diff.external` name a program to execute. So run git from the project
+root and put every flag *after* the subcommand. If your working directory
+is not the project root, say so in your report rather than reaching for
+`-C`; only `{{GIT_SAFE_GLOBAL_OPTS}}` are accepted before a subcommand.
+
 Denied: anything that writes, anything that mutates git state, arbitrary
 interpreters (`python3`, `awk`, `sed -e`, `node -e`, `bash -c`, `xargs`),
 package installation, and network access.
@@ -287,8 +296,8 @@ and the smoke test that caught it was a `sed` command succeeding with
   sandbox and this guard is not running. If it simply succeeds, the fence
   is missing — treat that as the finding, not as a pass.
 - **Fenced build:** confirm an allowed command still works
-  (`git log --oneline -5`), and that a write attempt (`git commit`, a
-  redirect) is denied.
+  (`git log --oneline -5` — without `-C`, from the project root), and that
+  a write attempt (`git commit`, a redirect) is denied.
 - **Fenced build:** confirm the top-level session's own Bash is
   unaffected. If it is fenced too, `SCOPE_AGENT_TYPES` is missing.
 - The agent's final message parses as JSON with `jq`.
@@ -316,6 +325,7 @@ and the smoke test that caught it was a `sed` command succeeding with
 | `{{ALLOW_CMDS}}` | Fenced build: permitted command names | `ls cat head tail wc stat find grep rg jq diff cmp git` |
 | `{{ALLOW_CMDS_PROSE}}` | The same list, written out in the prompt | — |
 | `{{ALLOW_GIT_SUBCMDS}}` | Fenced build: read-only git subcommands | `log show diff status ls-files ls-tree cat-file blame rev-parse rev-list shortlog grep describe` |
+| `{{GIT_SAFE_GLOBAL_OPTS}}` | The valueless git global options the guard accepts; copy from `bash-guard.sh`'s default | `--no-pager --bare --literal-pathspecs --icase-pathspecs --no-replace-objects --no-optional-locks -h` |
 | `{{ALLOW_NODE_SCRIPTS}}` | Exact validator scripts `node` may run, or drop `node` from `ALLOW_CMDS` | — |
 
 If the project has no network surface at all, the priority list becomes
