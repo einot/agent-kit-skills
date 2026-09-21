@@ -25,3 +25,24 @@ jobs:
 
       - name: Validate skills/*/SKILL.md
         run: python3 scripts/validate-skills.py .
+
+      # The hooks ship as executable files, so a syntax error or a lost
+      # exec bit is a broken install rather than a broken document. Both
+      # are cheap to catch here and invisible in review.
+      - name: Check the guard hooks
+        run: |
+          set -euo pipefail
+          status=0
+          for hook in skills/agent-kit/hooks/*.sh; do
+            if bash -n "$hook"; then
+              echo "ok: $hook parses"
+            else
+              echo "::error file=$hook::does not parse under bash -n"
+              status=1
+            fi
+            if [ ! -x "$hook" ]; then
+              echo "::error file=$hook::is not executable (git mode should be 100755)"
+              status=1
+            fi
+          done
+          exit "$status"

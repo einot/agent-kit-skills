@@ -2,9 +2,10 @@
 
 Seven Claude Code skills that rebuild, in any project, a delegation-based
 orchestration system: a top-level session that acts as project manager and
-never edits code itself, six subagents with disjoint write scopes, a shared
-path-guard hook that enforces those scopes, and the governance rules that
-hold it together.
+never edits code itself, six subagents with disjoint write scopes, two
+shared guard hooks that enforce those scopes, the `settings.json` wiring
+that actually makes the guards fire, and the governance rules that hold it
+together.
 
 ## What's in the bundle
 
@@ -18,10 +19,19 @@ hold it together.
 | `skills/agent-kit-security-auditor/SKILL.md` | `security-auditor` | no — JSON findings only |
 | `skills/agent-kit-supervisor/SKILL.md` | `supervisor` | no — JSON findings only |
 
-Every file is self-contained: the agent definition to write, the
-`path-guard.sh` hook source where the agent needs one, the placeholder
-table for adapting it, and a verification checklist. Nothing fetches
-anything at install time.
+The two guard hooks are real, executable files rather than source pasted
+into a skill:
+
+| File | What it fences |
+| --- | --- |
+| `skills/agent-kit/hooks/path-guard.sh` | which paths an agent may read or write (Edit/Write/Read/Grep/Glob) |
+| `skills/agent-kit/hooks/bash-guard.sh` | a default-deny allowlist over the Bash tool, for an agent that needs read-only inspection tooling and nothing else |
+
+Every skill that needs a guard points at those same two files, so a fix
+lands once instead of in four copies. Each skill still carries everything
+else it needs: the agent definition to write, the `settings.json` entry
+that wires its guard, the placeholder table for adapting it, and a
+verification checklist. Nothing fetches anything at install time.
 
 ## Install
 
@@ -35,11 +45,35 @@ cp -r agent-kit-skills/skills/* <project>/.claude/skills/
 ```
 
 Then, in that project, invoke `agent-kit` to install all six agents, the
-shared hook and the `CLAUDE.md` governance sections — or invoke a single
-`agent-kit-<agent>` skill to install just that one.
+shared hooks, the `settings.json` wiring and the `CLAUDE.md` governance
+sections — or invoke a single `agent-kit-<agent>` skill to install just
+that one.
 
-Requires `bash` and `jq` on the machine running the session (the path
-guard is a bash hook that parses its JSON payload with `jq`).
+Requires `bash` and `jq` on the machine running the session (both guards
+are bash hooks that parse their JSON payload with `jq`).
+
+## The one thing to get right
+
+Guards are wired in `.claude/settings.json`, scoped per agent with
+`SCOPE_AGENT_TYPES`, and **never** in an agent file's `hooks:`
+frontmatter. A guard declared in frontmatter did not fire in the
+environment this kit came out of — probed three times, including with an
+absolute script path — with no error and no warning, so the agent simply
+ran unfenced. Whether it fires appears to depend on workspace-trust state
+that is invisible from the repository, so it can look enforced on one
+machine and do nothing on another.
+
+Two consequences worth knowing before you trust an install:
+
+- Hook configuration is read from the **main checkout**, not from a
+  worktree-isolated agent's checkout. A `coder` running under
+  `isolation: worktree` is fenced by the main checkout's `settings.json`;
+  the copy inside its worktree is inert.
+- A config test is not a fired hook. The only evidence a guard works is a
+  real dispatch attempting something the policy must refuse, and a refusal
+  whose text comes from the guard. The guard in its home project was
+  reviewed nine times before anyone noticed it had never once been
+  invoked.
 
 ## Developing the skills
 
