@@ -96,7 +96,7 @@ after it:
 
 ### Verify
 
-- The agent's final message parses as JSON with `jq`.
+- The **last JSON object** in the agent's final message parses with `jq`.
 - A clean change yields `{"findings": []}` rather than invented nits.
 - Confirm it has no Bash: asked to run the test suite, it must say it
   cannot, not describe what the suite "would" report.
@@ -116,6 +116,20 @@ rule verbatim — the session's handling of findings depends on both.
 Extend `category` freely; it is a free-form slug by design.
 
 Add a `model:` line to pin a model. Omit it to inherit the session's.
+
+## Parsing the output: extract, don't assume
+
+The JSON-only instruction is a strong default, not a guarantee. In
+testing, both read-only agents prefixed their JSON with a paragraph — one
+summarising its reasoning, one flagging suspicious content it had read and
+ignored. Both were behaving sensibly; neither produced a message that
+`jq` could parse whole.
+
+So the session must **extract the last JSON object in the final message**
+and parse that, rather than feeding the whole message to `jq`. Treat a
+message with no parseable JSON object as a dispatch failure and re-run it;
+do not fall back to reading the prose, because the point of the contract
+is that the session decides mechanically.
 
 ## Using the output
 
