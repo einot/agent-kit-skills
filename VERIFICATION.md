@@ -21,6 +21,7 @@ session against it.
 | **Hook config comes from the main checkout, not the worktree** | The decisive experiment: `coder` ran under `isolation: worktree` (confirmed — it reported a `.claude/worktrees/agent-…` root), its own checkout's `settings.json` contained **zero** coder policy, and it was still denied by a policy present only in the main checkout's uncommitted working tree. |
 | `supervisor` catches a worker that exceeded its brief | Given a brief saying "touch only that one file" and a report claiming exactly that, against a tree with an extra new module and an edited `README.md`, it returned scope violations for both plus a dishonesty finding — and stayed out of `reviewer`'s remit. |
 | `supervisor` stays quiet on an honest in-scope change | The control case produced no scope finding. |
+| **`supervisor` needs the git evidence to answer its own central question** | A/B on one scenario: a worker made one authorized edit and one *grep-invisible* overreach (it deleted a test file). Without git evidence, `supervisor` noticed the deletion, decided from ambient context that it predated the dispatch, cleared the worker, and returned a single `unverified` finding. With `git status --porcelain` and `git diff` supplied and scoped to the dispatch, the same scenario produced a high-severity `scope-violation` plus `misreported-work`, correctly attributed, with no `unverified` finding at all. |
 | `reviewer` produces specific, non-generic findings | Against a spec requiring `name` string / `size` integer, it found the missing type validation and the placeholder test, each with a concrete failure scenario. |
 
 ## Verified by direct payload probes
@@ -43,6 +44,26 @@ about wiring. Only the dispatch table above does that.
   essentially every dispatch, which would have trained everyone to ignore
   the stop. `unverified` is now a reserved category that is reported
   verbatim but does not halt.
+
+## A third defect, since fixed
+
+`supervisor` was specified to receive two things: the brief and the
+worker's report. That left its central question — did the worker touch
+only what it was told to? — answerable only by reading files and grepping
+for traces of the feature, which cannot see a deletion, a whitespace-only
+edit, or a change to a file that never names the feature. The A/B above
+shows the failure is not a quiet miss but a confident exoneration: it
+reached for whatever git snapshot was in its ambient context and
+misattributed the change.
+
+It now receives four things, the extra two being `git status --porcelain`
+and `git diff` scoped to the dispatch and collected by the session — which
+has git, knows the worktree path, and is already the layer the design
+trusts to read git state. `supervisor` keeps no Bash and therefore keeps
+the structural exemption that makes it worth trusting. `unverified`
+narrows to what is genuinely unsettleable without execution, which in
+practice means claims about test runs — and those should not be put in
+front of it at all.
 
 ## Not verified
 

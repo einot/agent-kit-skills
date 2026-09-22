@@ -63,10 +63,11 @@ layer deciding whether to trust a worker's report is the layer that can
 run the tests and read the git state.
 
 **Verification of the workers themselves.** Every dispatch to an agent
-that can write or execute is paired with a `supervisor` review that
-receives the literal brief and the worker's own report, and checks both
-against the files on disk. Any finding stops everything and goes to the
-human verbatim.
+that can write or execute is paired with a `supervisor` review. It
+receives the literal brief, the worker's own report, and the `git status`
+and `git diff` for that dispatch — collected by the session, because
+`supervisor` has no Bash and keeps it that way. Any finding goes to the
+human verbatim, and stops everything unless every entry is `unverified`.
 
 ```text
                   ┌──────────────── top-level session (PM only) ───────────────┐
@@ -393,8 +394,10 @@ reading a config file.
    than parsing the whole message: in testing, agents prefixed the JSON
    with a paragraph often enough that a whole-message parse is not a
    contract you can build on.
-7. `supervisor` catches a worker that touched one file beyond its brief,
-   *and* stays quiet when given an honest report of an in-scope change.
+7. `supervisor` catches a worker that touched one file beyond its brief —
+   make it a change grepping cannot find, such as a deletion — *and* stays
+   quiet when given an honest report of an in-scope change. Give it the
+   git evidence; without it, the scope question is guesswork.
 8. The top-level session is *not* affected by any of the above — the
    scoping is meant to leave it alone.
 
