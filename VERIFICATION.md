@@ -131,9 +131,12 @@ fails to parse is still the wrong default.
 
 ### The behaviour suite
 
-`tests/hooks/`: 1,254 cases. 1,117 pass, 2 skip, 135 are strict expected
-failures. Before the xfail list existed, the port was run test-for-test
-beside the upstream suite at `bf327b2`:
+`tests/hooks/`: 1,254 cases. On Linux with bash 5 (CI, Ubuntu 24.04) 1,122
+pass and 132 are strict expected failures. On macOS with its default bash
+3.2, 1,117 pass, 2 skip (they need `/dev/full`, which macOS lacks) and 135
+are expected failures — the same 132 plus three that only fail on bash
+3.2. Before the xfail list existed, the port was run test-for-test beside
+the upstream suite at `bf327b2`, on macOS:
 
 - The 94 tests that fail upstream and pass here are every `configured`
   test that reads `settings.json`. Upstream has not applied its hardened
@@ -147,9 +150,11 @@ beside the upstream suite at `bf327b2`:
 
 ### Known open gaps
 
-Recorded in `tests/hooks/pending_upstream.txt`, each as a strict xfail:
+Recorded in `tests/hooks/pending_upstream.txt`, each under a section that
+says when it applies:
 
-- **133 cases — ADR-0018's seventh and eighth amendments.** A payload over
+- **132 cases, every platform — ADR-0018's seventh and eighth
+  amendments.** A payload over
   8 MiB or holding a raw U+0002; a Grep or Glob value beginning with `-`;
   a path component beginning with `~`; whitespace or a control character
   at either end of a path; a path read from the wrong tool field; a bound
@@ -157,10 +162,19 @@ Recorded in `tests/hooks/pending_upstream.txt`, each as a strict xfail:
   symbolic links. 46 test functions: 45 introduced by the amendment tests,
   and one existing function whose expectation the eighth amendment
   changed.
-- **2 cases — literal mode lets SOH (`0x01`) and DEL (`0x7f`) through.**
-  The second amendment requires literal mode to refuse control characters;
-  it refuses the others. These failed before the amendment-7 tests
-  existed, so they are not waiting on the same upstream work.
+- **2 cases, bash 3.2 only — literal mode lets SOH (`0x01`) and DEL
+  (`0x7f`) through.** The second amendment requires literal mode to refuse
+  control characters. On bash 5 it refuses these two with the rest; on bash
+  3.2, macOS's `/bin/bash`, it lets them through. This was first reported
+  here as a gap on every platform, from macOS runs alone; CI on Linux
+  showed both tests passing, which is what located it. It matters on a Mac
+  because the hooks start with `#!/usr/bin/env bash` and so run under
+  `/bin/bash` unless something puts a newer bash first — and literal mode
+  is the core of the `coder` tripwire.
+- **1 case, bash 3.2 only — a very long coder path is not decided inside
+  the test's time budget.** Bash 5 decides it in time. Decision 25's bound
+  on each guard's work (seventh amendment) is meant to make it hold
+  everywhere. Not strict, since it is a timing test.
 
 ## Not verified
 

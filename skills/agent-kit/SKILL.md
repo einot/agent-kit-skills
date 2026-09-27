@@ -115,7 +115,10 @@ bash -n .claude/hooks/path-guard.sh && bash -n .claude/hooks/bash-guard.sh
 ```
 
 Requires `bash` and `jq` on the machine running the session; both hooks
-parse their JSON payload with `jq`.
+parse their JSON payload with `jq`. Prefer bash 4 or newer. Both scripts
+work on the bash 3.2 that macOS ships as `/bin/bash`, with one known
+difference: the Bash guard's literal mode lets SOH and DEL through there.
+See `agent-kit-coder` if you use its tripwire.
 
 `bash-guard.sh` is only needed if you give `security-auditor` a Bash tool
 (see `agent-kit-security-auditor`). Copy it anyway — an inert hook costs

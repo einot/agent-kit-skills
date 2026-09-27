@@ -339,6 +339,21 @@ widen `ALLOW_CMDS` to compensate, which would admit the launchers the
 policy exists to close. Either use the no-Bash-fence build and rely on
 `supervisor`, or add rules for your toolchain to the guard, with tests.
 
+### On macOS: the bash version
+
+The hooks start with `#!/usr/bin/env bash`, so they run under the first
+`bash` on the hook's `PATH` — on a Mac usually `/bin/bash`, which is 3.2.
+Under bash 3.2, literal mode lets two control characters, SOH (`0x01`) and
+DEL (`0x7f`), through; under bash 5 it refuses them, as the upstream design
+requires. Every other literal-mode rule behaves the same on both. The
+tripwire leans on literal mode more than anything else in the kit, so on a
+Mac prefer a bash 4 or newer for the hooks — for example by naming that
+interpreter in front of the script path in the hook command — and then do
+what the rest of this kit asks of any wiring change: confirm with a
+dispatch that a refused command's text still begins `bash guard:`. The
+behaviour suite prints which bash it found, and lists these two cases as
+expected failures only when that bash is older than 4.
+
 ### The policy
 
 ````json

@@ -1,23 +1,23 @@
-# Tests that encode behaviour specified upstream but not yet implemented in
-# the hook scripts. One test ID per line, relative to tests/hooks/, grouped
-# under a [section] whose reason conftest.py attaches to the xfail.
+# Tests that encode behaviour the hook scripts do not yet deliver, either
+# anywhere (specified upstream, not implemented) or only on some platforms.
+# One test ID per line, relative to tests/hooks/, under a [section] whose
+# reason, strictness and platform condition conftest.py applies.
 #
-# conftest.py marks every ID here as xfail(strict=True). Strict is the point:
-# when the hooks are updated with a fix and a test starts passing, it
-# XPASSes, which fails the build until its line is deleted from this file.
-# A gap cannot quietly stay listed after it is closed, or be closed without
-# anyone noticing. An ID that no longer names a test also fails the build.
+# Strict sections mark tests xfail(strict=True): when a test starts passing
+# it XPASSes, which fails the build until its line is deleted here. A gap
+# cannot quietly stay listed after it is closed, or be closed without anyone
+# noticing. An ID that no longer names a test also fails the build.
 #
 # Generated at upstream bf327b2 by running the upstream suite and this port
-# side by side: these are exactly the tests that fail in both. The hook
-# scripts are byte-identical between upstream b072c4a (the commit before the
-# amendment-7 tests) and bf327b2, which is what separates the two sections.
+# side by side on macOS (bash 3.2), then confirmed on Linux (bash 5) in CI.
+# Every test listed here failed in both suites on macOS. The platform
+# sections are the ones that then passed on Linux.
 
 [amendment-7-8]
-# ADR-0018's seventh and eighth amendments. 45 of these functions were
-# introduced by the amendment tests (upstream 11ece0f, bf327b2); one existing
-# function had its expectation changed by the eighth amendment. The
-# implementation briefs (C8, C9) have not landed upstream.
+# Strict, every platform. ADR-0018's seventh and eighth amendments: 45 of
+# these functions were introduced by the amendment tests (upstream 11ece0f,
+# bf327b2), and one existing function's expectation was changed by the
+# eighth amendment. The implementation briefs (C8, C9) have not landed.
 test_bash_guard_behavior.py::test_a_bash_command_that_fails_with_status_2_gets_the_backstop_denial
 test_bash_guard_behavior.py::test_a_bash_cwd_that_cannot_be_read_faithfully_gets_the_backstop_denial[nul]
 test_bash_guard_behavior.py::test_a_bash_cwd_that_cannot_be_read_faithfully_gets_the_backstop_denial[trailing-newline]
@@ -79,7 +79,6 @@ test_path_guard_behavior.py::test_a_component_that_begins_with_a_tilde_is_refuse
 test_path_guard_behavior.py::test_a_cwd_that_cannot_be_read_faithfully_gets_the_backstop_denial[nul]
 test_path_guard_behavior.py::test_a_cwd_that_cannot_be_read_faithfully_gets_the_backstop_denial[trailing-newline]
 test_path_guard_behavior.py::test_a_guarded_write_whose_path_ends_with_a_newline_is_refused
-test_path_guard_behavior.py::test_a_long_coder_path_is_decided_within_the_timeout
 test_path_guard_behavior.py::test_a_payload_holding_a_raw_nul_or_u0002_gets_the_shape_denial[nul-after-the-closing-brace-guarded]
 test_path_guard_behavior.py::test_a_payload_holding_a_raw_nul_or_u0002_gets_the_shape_denial[nul-after-the-closing-brace-no-policy]
 test_path_guard_behavior.py::test_a_payload_holding_a_raw_nul_or_u0002_gets_the_shape_denial[nul-after-the-closing-brace-scoped-to-coder]
@@ -152,9 +151,17 @@ test_path_guard_behavior.py::test_the_field_check_refuses_the_caller_a_scoped_po
 test_path_guard_behavior.py::test_the_field_check_runs_before_the_nul_gate
 test_path_guard_behavior.py::test_the_trailing_newline_test_runs_before_the_edge_check
 
-[literal-mode-soh-del]
-# Older than the amendment-7 tests: these failed at upstream b072c4a too.
-# In literal mode the guard refuses control characters (second amendment),
-# except SOH (0x01) and DEL (0x7f), which it allows. Not tied to C8 or C9.
+[bash-3-control-chars]
+# Strict, bash older than 4 only. Literal mode must refuse control
+# characters (second amendment). On bash 5 it refuses SOH (0x01) and DEL
+# (0x7f) along with the rest; on bash 3.2 -- macOS's /bin/bash -- it lets
+# those two through. These failed before the amendment-7 tests existed.
 test_bash_guard_behavior.py::test_literal_mode_refuses_a_control_character[0x01]
 test_bash_guard_behavior.py::test_literal_mode_refuses_a_control_character[0x7f]
+
+[bash-3-slow]
+# NOT strict (a timing test), bash older than 4 only. On bash 3.2 the guard
+# cannot decide a very long coder path inside the test's time budget; on
+# bash 5 it can. Decision 25's bound on each guard's work (seventh
+# amendment, not yet implemented) is meant to make this hold everywhere.
+test_path_guard_behavior.py::test_a_long_coder_path_is_decided_within_the_timeout

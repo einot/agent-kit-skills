@@ -98,15 +98,23 @@ rather than someone's project. It needs Python, pytest, bash and jq:
 python -m pytest tests/hooks -q
 ```
 
-135 of those cases are **strict expected failures**, listed in
-`tests/hooks/pending_upstream.txt`. They encode gaps the upstream design
-has specified and tested but not yet implemented. Strict means that when
-one is fixed it fails the build until its line is removed — the list
-cannot quietly go stale.
+132 of those cases are **strict expected failures** on every platform,
+listed in `tests/hooks/pending_upstream.txt`. They encode gaps the
+upstream design has specified and tested but not yet implemented. Strict
+means that when one is fixed it fails the build until its line is removed
+— the list cannot quietly go stale. Three more fail only under bash 3.2;
+see below.
 
 This proves the guard *logic*. It does not prove your `settings.json`
 reaches the guard; only a real dispatch does that — see `agent-kit`'s
 *Verify the whole system*.
+
+**On macOS, mind the bash version.** The hooks start with
+`#!/usr/bin/env bash`, so on a Mac they run under `/bin/bash`, which is
+3.2. There, the Bash guard's literal mode — the core of the optional
+`coder` tripwire — lets two control characters, SOH and DEL, through; bash
+5 refuses them. The suite reports which bash it found in its header. Run
+it once on the machine that will run your agents.
 
 ## Developing the skills
 
