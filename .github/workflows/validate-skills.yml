@@ -46,3 +46,26 @@ jobs:
             fi
           done
           exit "$status"
+
+  # The kit's central claim is that its guards refuse what they must. This
+  # job is where that claim is checked: every behaviour test runs the real
+  # hook as a subprocess, fed a PreToolUse payload, and asserts on the exit
+  # status and the refusal text. The "configured" tests run each policy of
+  # tests/hooks/fixtures/settings.json -- the wiring the skills document,
+  # filled in for an example layout -- so a glob change in the docs that
+  # opens a hole fails here, not in someone's project.
+  hooks:
+    name: hook behaviour
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: pip install --quiet pytest
+
+      - name: Guards refuse what they must
+        run: python -m pytest tests/hooks -q -p no:cacheprovider

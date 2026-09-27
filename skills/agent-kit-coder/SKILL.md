@@ -78,6 +78,14 @@ from the main checkout, so the `.claude/` directory inside your worktree
 is not the one in force, and changing it would be an attempt to escape
 rather than a fix.
 
+If your Bash is fenced and a command is refused, the refusal is final for
+this task. Do not reach the same effect another way — not with a different
+spelling, quoting or option order, not with another interpreter, and not
+by writing a script, test, config file or build target and then running a
+command that picks it up. Each of those is circumvention, whatever the
+intent. Stop the part of the work that needs it, finish what does not, and
+report the command, why you needed it, and the refusal word for word.
+
 If a test looks wrong, or the interface you're implementing against seems
 incomplete or inconsistent with the spec, say so and stop — don't silently
 change the test or the schema yourself. Flag it back to whoever spawned
@@ -125,7 +133,7 @@ anything around it.
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='coder' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='coder' PATH_ROOT='cwd' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       }
@@ -136,6 +144,24 @@ anything around it.
 
 Merge this entry into the file's existing `PreToolUse` array rather than
 replacing it; each guarded agent in the kit contributes its own entry.
+
+**`PATH_ROOT='cwd'` makes this guard confine the agent to its worktree.**
+It says every guarded path must lie inside the calling agent's working
+directory, which for a worktree-isolated `coder` is its worktree. Without
+it the guard tries the path against the working directory and then against
+the project, and the second base matches the **main checkout**: run
+directly, the guard with `PATH_ROOT` unset allows a write to
+`<main checkout>/packages/…/x.py` from a worktree agent, and with
+`PATH_ROOT='cwd'` refuses it.
+
+In a real dispatch that write never reaches the guard. Claude Code's own
+worktree check refuses it first — a hook that logged every payload it
+received saw the in-worktree edit and nothing for the escape. So today
+this is defence in depth: the kit's guard enforces the boundary itself
+instead of depending on a harness behaviour that another version or
+environment might not share. The same dispatch confirmed the assumption it
+rests on — the payload's `cwd` is the worktree — and that the agent can
+still write its own files.
 
 Four things about this wiring are load-bearing, and the last one bites
 this agent specifically:
@@ -198,18 +224,55 @@ agent the policy that counts is the one in the **main** checkout.
 | `{{PROJECT}}` | Project name | — |
 | `{{SPEC_ENTRY}}` | Path a reader should open first | `docs/spec/README.md` |
 | `{{CODE_DIRS}}` | Where implementation lives | `packages/`, `services/`, `tools/`, or `src/` |
-| `{{DENY_GLOBS}}` | Space-separated write denylist | `tests/* */tests/* docs/spec/* docs/adr/* docs/protocol/* schemas/*` |
+| `{{DENY_GLOBS}}` | Space-separated write denylist — see below | a Python project: see below |
 | `{{STYLE_CONFIG}}` | Where style is defined | `ruff.toml`, `.eslintrc`, `rustfmt.toml`, … |
+| `{{MAKE_GATE_TARGETS}}` | Tripwire only: `make` targets the coder may run | `typecheck` |
 | `{{PROJECT_SPECIFIC_CONVENTIONS}}` | Standing conventions, or delete | — |
 
 Glob semantics are bash `[[ str == pattern ]]`, so a bare `*` crosses `/`:
-`tests/*` matches `tests/unit/test_foo.py`. Cover **both** layouts if the
-project has them — a top-level `tests/` and per-package `*/tests/` — a
-denylist that misses one is a denylist that does nothing there.
+`tests/*` matches `tests/unit/test_foo.py`. In a **denylist** that breadth
+is what you want — `*/tests/*` denies every nested test directory — so
+unlike `test-author`'s allowlists, these may start with `*`. Give each
+directory both a bare and a `/*` entry.
 
-Include in `{{DENY_GLOBS}}` anything else this agent must not rewrite
-unreviewed: `.claude/*`, `.github/workflows/*` if CI changes need a human,
-a generated-code directory, an infrastructure state file.
+`{{DENY_GLOBS}}` is four groups. The first three are the same for every
+project; the fourth depends on your toolchain.
+
+1. **Other agents' domains.** `tests tests/* */tests */tests/*`, your
+   test kit, and `docs/spec/* docs/adr/* docs/protocol/* schemas/*`.
+2. **Agent configuration.** `.claude .claude/* */.claude */.claude/*
+   CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json
+   */.mcp.json`. An agent that can rewrite `settings.json` can rewrite its
+   own fence.
+3. **Escapes and invisible state.** `/* ../* */../*` — an absolute path or
+   a climb out of the worktree — and `.git .git/* */.git */.git/*`, plus
+   your virtualenv and bytecode (`.venv/* */.venv/* __pycache__/*
+   */__pycache__/*` for Python). Changes there do not show in `git diff`,
+   so `supervisor` would never see them.
+4. **Anything that changes what a gate executes.** This is the group that
+   matters most and varies most. When `coder` runs the test suite, the test
+   runner loads files the *test author* owns; when it runs the linter or
+   type checker, those load configuration. A file that is picked up
+   automatically is a way to run arbitrary code through a gate that looks
+   innocent. For Python: `conftest.py */conftest.py test_*.py */test_*.py
+   *_test.py sitecustomize.py */sitecustomize.py usercustomize.py
+   */usercustomize.py`, the pytest/mypy/ruff/uv configuration files
+   (`pytest.ini .pytest.ini pytest.toml .pytest.toml tox.ini setup.cfg
+   mypy.ini .mypy.ini .ruff.toml */ruff.toml uv.toml .python-version`,
+   each also with `*/`), `pytest pytest/* ruff ruff/* mypy mypy/*` (a local
+   package of that name shadows the real tool), `GNUmakefile makefile`
+   (make reads either in preference to `Makefile`, so creating one
+   replaces the reviewed recipe), and `uv.lock`.
+
+`tests/hooks/fixtures/settings.json` in this bundle has all four groups
+filled in for a Python project on uv, and CI proves each entry against the
+guard. For another toolchain, the question to ask of every file it reads
+is: *would creating or editing this make a gate run something the command
+line does not show?*
+
+Add anything else this agent must not rewrite unreviewed:
+`.github/workflows/*` if CI changes need a human, a generated-code
+directory, an infrastructure state file.
 
 ## Worktree isolation
 
@@ -219,10 +282,110 @@ whether the coder commits in its worktree and the session merges, or the
 session applies the diff. State that in the brief; a worker that does not
 know is a worker that guesses.
 
-Keeping Bash on this agent is what lets it run the tests, and is also why
-its guard is a strong default rather than a sandbox. If you need a hard
-boundary, drop Bash — and accept that the agent can then no longer verify
-its own work.
+Keeping Bash on this agent is what lets it run the tests. Unfenced, it is
+also a way around every other rule in this file. The next section is the
+fence; it is optional, and it is a tripwire rather than a boundary.
+
+## Optional: a Bash tripwire
+
+### Why this exists
+
+In the project this kit came from, a `coder` in an isolated worktree tried
+to run a multi-line Python self-check. The harness's worktree check refused
+it — as `uv run python - <<'EOF'`, as `.venv/bin/python - <<'EOF'`, as
+`python3 - <<'EOF'` with the venv's site-packages added by hand; six
+refusals. The same script then ran as a multi-line `uv run python -c
+"..."`. The agent reported that it "did not try to get around it."
+
+Two lessons. A harness check refuses commands it cannot *analyse*, not
+capabilities, so a re-spelling passes it. And nothing had told the agent
+that re-spelling a refused command *is* getting around it — so it could
+describe doing exactly that, sincerely, as not trying.
+
+### What it is — and is not
+
+**No Bash policy can stop an agent from running arbitrary code if it can
+write the code a gate runs, and this one does not try.** The test runner
+imports the implementation; `coder` writes the implementation. So the
+tripwire does three narrower things:
+
+1. **It refuses every route that needs no file edit first**: ad-hoc
+   interpreters (`python -c`, `uv run python`, heredocs), multi-line input,
+   package installs, network clients, options that write files or load
+   code, and any command the guard has no model for.
+2. **It makes the remaining routes leave evidence.** Running code the
+   policy does not name now requires changing a tracked file (visible in
+   `git diff`) or creating an untracked one outside the denied names
+   (visible in `git status`). The routes git does not show — `.venv/`,
+   `__pycache__/`, `.git/` — are denied by the write fence. This composes
+   with `agent-kit-supervisor`: the session hands `supervisor` exactly that
+   `git diff` and `git status`.
+3. **It removes the ambiguity.** With `DENY_ADVICE='stop-and-report'`,
+   every refusal ends with a paragraph saying the refusal is final, that
+   re-spelling it, using another interpreter or writing a file a gate picks
+   up are all circumvention, and what to report instead. An agent that does
+   it anyway cannot plausibly report that it did not try.
+
+It does not see what a gate executes, it is not a sandbox, it does not
+preserve evidence of an edit-run-revert, and it does not restrict reading.
+
+### It fits one toolchain
+
+`bash-guard.sh` has rules for `pytest` and `ruff` as `uv run` targets, for
+`make` targets, and for git's writing subcommands. That is a Python
+project on uv with a `Makefile`. On any other toolchain it will refuse your
+gates, because a command it has no model for is refused by design — do not
+widen `ALLOW_CMDS` to compensate, which would admit the launchers the
+policy exists to close. Either use the no-Bash-fence build and rely on
+`supervisor`, or add rules for your toolchain to the guard, with tests.
+
+### The policy
+
+````json
+{
+  "matcher": "Bash",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "SCOPE_AGENT_TYPES='coder' LITERAL_ONLY='1' DENY_ADVICE='stop-and-report' ALLOW_CMDS='ls cat head tail wc stat find grep rg jq diff cmp pwd git uv make' ALLOW_GIT_SUBCMDS='status diff log show rev-parse ls-files add commit merge' ALLOW_UV_RUN_TARGETS='pytest ruff' ALLOW_MAKE_TARGETS='{{MAKE_GATE_TARGETS}}' WRITE_DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/bash-guard.sh"
+    }
+  ]
+}
+````
+
+- `LITERAL_ONLY='1'` refuses any character bash would rewrite after the
+  guard has looked — quotes, `$`, backticks, braces, globs, redirection,
+  newlines — plus NUL and control characters. What the guard approves is
+  then exactly what runs. The `uv`, `make`, git-write and `ruff format`
+  rules run only in literal mode.
+- `WRITE_DENY_GLOBS` is **the same list as the path guard's
+  `{{DENY_GLOBS}}`**. It fences what `ruff format` may rewrite and what
+  `git add` may stage, so the Bash route and the Edit/Write route cannot
+  disagree. Keep them identical.
+- Every `uv run` carries `--locked`, and the guard refuses one that does
+  not. Make every `uv run` recipe in the `Makefile` do the same, or `make`
+  becomes the unlocked route.
+- `{{MAKE_GATE_TARGETS}}` are the targets `coder` needs that are not
+  `pytest` or `ruff` — the type checker, typically (`typecheck`). Name
+  them; do not allow `make` bare.
+- **Commits go through a file.** Literal mode refuses quotes, so
+  `git commit -m "Fix the widget"` cannot be written, and the attribution
+  trailer the harness asks for contains `<`, `>` and `(`, which no quoting
+  could carry anyway. The coder writes the whole message, trailers
+  included, to `.commit-msg` at its worktree root with the Write tool, then
+  runs `git commit -F .commit-msg`. Add `.commit-msg` to `.gitignore`, and
+  say so in the coder's brief — an agent that does not know this will
+  report that it cannot commit.
+- `git commit` refuses `--amend` (it could fold the coder's change into
+  someone else's commit), `-n`/`--no-verify` (it skips hooks), `-S` (it
+  runs `gpg.program`) and every option not on a short allowlist; `git add`
+  refuses `-f`, `-p` and `-i`. A message word beginning with `-` is refused
+  too — a documented over-denial.
+
+The full instantiation is the second entry of
+`tests/hooks/fixtures/settings.json`, and group J of
+`tests/hooks/test_bash_guard_behavior.py` replays the six commands from
+the incident against it; each is refused.
 
 ## How it fits the rest of the kit
 

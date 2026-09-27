@@ -171,7 +171,7 @@ one settings entry can only carry one:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='test-author' EXEMPT_GLOBS='{{TEST_READ_EXEMPT_GLOBS}}' DENY_GLOBS='{{IMPL_DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' EXEMPT_GLOBS='{{TEST_READ_EXEMPT_GLOBS}}' DENY_GLOBS='{{IMPL_DENY_GLOBS}} .claude .claude/* .git .git/* build build/* dist dist/* htmlcov htmlcov/* .coverage .coverage.* {{TOOL_CACHE_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       },
@@ -180,7 +180,7 @@ one settings entry can only carry one:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='test-author' ALLOW_GLOBS='{{TEST_WRITE_ALLOW_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' ALLOW_GLOBS='{{TEST_WRITE_ALLOW_GLOBS}}' DENY_GLOBS='.claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json .git .git/* */.git */.git/*' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       }
@@ -220,6 +220,42 @@ directories nested inside them. Order matters: the exemptions must name
 every test directory that lives *under* a denied tree, or the agent
 cannot read its own existing tests.
 
+Three further properties matter more for this agent than any other,
+because its guard is the one whose failure produces nothing visible — an
+agent that has read the implementation writes tests that pass. Each was a
+working bypass of the clean room in an earlier version of this kit:
+
+- **The implementation is not only in the source trees.** A coverage HTML
+  report (`htmlcov/`) embeds every implementation file's full source. Git's
+  object store holds every version of it. A type checker's cache records
+  its signatures, and a build directory holds a copy. A denylist naming
+  only `packages` and `src` leaves all of them readable, so the read policy
+  above also denies `.git`, `build`, `dist`, `htmlcov`, `.coverage*`,
+  `.claude` and `{{TOOL_CACHE_GLOBS}}`. Tested by dispatch: under the old
+  denylist, `test-author` read a coverage report under `htmlcov/` and
+  quoted the implementation source it contained. `.git/objects/` and
+  `.mypy_cache/` were readable to the guard in the same way (tested
+  against the hook directly).
+- **Exemptions and write allowlists are anchored at a top-level
+  directory.** A bare `*` crosses `/`, so `*/tests/*` matches *any* path
+  with a `tests` component — including `docs/spec/tests/fake.md`, inside
+  the architect's spec tree. Tested by dispatch: with `*/tests/*` as its
+  write allowlist, `test-author` created that file. Name each tree:
+  `packages/*/tests/*`, `services/*/tests/*`. The read exemptions are
+  anchored the same way, for the same reason.
+- **`..` no longer reaches through an exemption.** The guard matches paths
+  as text, so `tests/../packages` matches the exemption `tests/*` while
+  naming the implementation tree. Which tools that reaches depends on the
+  harness: in the environment this kit was tested in, Claude Code resolves
+  `..` in a `Read`'s `file_path` before the hook sees it, but passes a
+  `Grep`'s `path` through as written. Tested by dispatch against the old
+  guard: `Read packages/demo/tests/../src/demo.py` was refused (the resolved
+  path hit the denylist), but `Grep make_widget path=tests/../packages`
+  returned an implementation line. The guard now refuses any path with a
+  `.` or `..` component, and any search pattern that climbs out of the
+  directory being searched; the same `Grep` is refused by dispatch. Nothing
+  in the wiring does this — it needs the current `path-guard.sh`.
+
 ### 3. Verify — do this one properly
 
 The read guard is the whole value of this agent, and it is the one guard
@@ -235,6 +271,11 @@ does not prove the hook was reached.
   implementation directory is denied (this is the bypass that matters).
 - A `Read` of a spec file and a `Write` to a test file both succeed.
 - A `Write` to an implementation file or to the spec is denied.
+- A `Read` of `packages/<pkg>/tests/../src/<file>` is denied — the `..`
+  that reaches through an exemption.
+- A `Read` under `htmlcov/` and under `.git/objects/` is denied — the
+  implementation's source, outside the source trees.
+- A `Write` to `docs/spec/tests/x.md` is denied — the anchoring.
 - Every denial above carries a reason whose text comes from the path
   guard. A refusal mentioning "allowed working directories" instead is
   the platform sandbox, and means this guard never ran.
@@ -248,9 +289,10 @@ does not prove the hook was reached.
 | `{{PROJECT}}` | Project name | — |
 | `{{SPEC_ENTRY}}` | Path a reader should open first | `docs/spec/README.md` |
 | `{{CODE_DIRS}}` | Implementation trees, prose form | `packages/`, `services/`, `tools/` |
-| `{{IMPL_DENY_GLOBS}}` | Read denylist | `packages packages/* services services/* tools tools/*` |
-| `{{TEST_READ_EXEMPT_GLOBS}}` | Read exemptions, checked first | `*/tests */tests/* tests tests/* packages/testkit packages/testkit/*` |
-| `{{TEST_WRITE_ALLOW_GLOBS}}` | Write allowlist | `*/tests/* tests/* packages/testkit/*` |
+| `{{IMPL_DENY_GLOBS}}` | Read denylist: the implementation trees | `packages packages/* services services/* tools tools/*` |
+| `{{TOOL_CACHE_GLOBS}}` | Read denylist: your toolchain's caches and snapshot dirs | Python: `.mypy_cache .mypy_cache/* .pytest_cache .pytest_cache/* .ruff_cache .ruff_cache/* .hypothesis .hypothesis/* .uv .uv/* snapshots snapshots/*` |
+| `{{TEST_READ_EXEMPT_GLOBS}}` | Read exemptions, checked first — **anchored** | `tests tests/* packages/*/tests packages/*/tests/* services/*/tests services/*/tests/* tools/*/tests tools/*/tests/* packages/testkit packages/testkit/*` |
+| `{{TEST_WRITE_ALLOW_GLOBS}}` | Write allowlist — **anchored** | `tests/* packages/*/tests/* services/*/tests/* tools/*/tests/* packages/testkit/*` |
 | `{{TESTKIT_DIR}}` | Shared fixtures/generators, or delete | `packages/testkit/` |
 | `{{SPEC_DIR}}` … `{{SCHEMA_DIR}}` | Doc trees the agent reads | `docs/spec/`, `docs/adr/`, `docs/protocol/`, `schemas/*.json` |
 
@@ -266,7 +308,17 @@ exemption globs have to match that layout precisely or the agent cannot
 read its own prior work.
 
 A single-tree layout (`src/` only) works the same way: deny `src src/*`,
-exempt whatever test pattern that tree uses.
+exempt whatever test pattern that tree uses — anchored, `src/*/tests/*`
+rather than `*/tests/*`.
+
+**Never start an exemption or an allowlist glob with `*`.** That is the
+one rule in this table that is easy to break by tidying: `*/tests/*` looks
+like a simplification of the anchored list, and it lets this agent write
+anywhere a directory called `tests` can be created.
+
+`tests/hooks/fixtures/settings.json` in this bundle is both policies
+filled in for a `packages/` + `services/` + `tools/` layout, and the kit's
+CI proves each glob in it against the guard.
 
 ## How it fits the rest of the kit
 

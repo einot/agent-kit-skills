@@ -43,11 +43,23 @@ and the easiest one to accidentally break — see `agent-kit-test-author`.
 
 **Enforcement, not instruction.** The boundaries above are `PreToolUse`
 hooks, not paragraphs. `path-guard.sh` polices which paths an agent may
-read or write; `bash-guard.sh` is a default-deny fence over the Bash tool
-for an agent that needs to run read-only inspection tooling and nothing
-else. Where enforcement is impossible — `coder` needs an unfenced Bash to
-run the test suite — the prompt says so plainly and `supervisor` covers
-the gap.
+read or write; `bash-guard.sh` is a default-deny fence over the Bash tool.
+Where enforcement is impossible — no Bash policy can stop an agent that
+writes the code a gate runs — the prompt says so plainly, the optional
+`coder` tripwire makes circumvention leave evidence, and `supervisor`
+reads that evidence.
+
+**Both guards fail closed.** Claude Code blocks a tool call only when a
+hook exits 2; any other non-zero exit is a non-blocking error and the call
+*runs*. So a guard that crashes on input it did not expect is a guard that
+allows it. Both scripts now refuse a payload they cannot read as a single
+tool call, and turn any exit other than 0 or 2 into a denial. They also
+refuse a path with a `.` or `..` component — `tests/../packages` matches a
+`tests/*` exemption as text while naming the implementation — a path
+outside the policy's root, a search pattern that climbs out of the searched
+directory, and a NUL byte anywhere. `VERIFICATION.md` records which of
+these were exploitable end to end by a dispatched agent and which were
+weaknesses of the hook alone.
 
 **Guards are only real once they have fired.** Hook configuration lives in
 `.claude/settings.json`, never in an agent file's `hooks:` frontmatter,
@@ -116,7 +128,7 @@ reasoning behind rules that look arbitrary until you know what broke.
 ### 2. Wire the guards in `.claude/settings.json`
 
 **This is the step that makes the difference between a guard and a
-decoration.** Read all four points before writing the file.
+decoration.** Read all five points before writing the file.
 
 **Hooks go in `.claude/settings.json`, never in an agent file's
 frontmatter.** `hooks:` is a documented frontmatter field, but a guard
@@ -163,7 +175,24 @@ dispatch attempting an operation the policy must refuse, and a refusal
 whose text comes from the guard. If a command that should be denied
 simply succeeds, treat that as evidence the fence is missing.
 
-The wiring, with the kit's default scopes:
+**Every path policy names its root with `PATH_ROOT`.** A guarded path
+must lie inside the policy's root, and the globs are written relative to
+it. `PATH_ROOT='project'` is `CLAUDE_PROJECT_DIR`; `PATH_ROOT='cwd'` is the
+calling agent's working directory. Leaving it unset keeps the old
+behaviour — the path is tried against the working directory, then the
+project — and for a worktree-isolated agent the second base is the **main
+checkout**. Run directly, the guard with `PATH_ROOT` unset allows a
+`coder` in `.claude/worktrees/agent-…/` to write
+`<main checkout>/packages/…` by absolute path; with `PATH_ROOT='cwd'` it
+refuses. In a real dispatch, in the environment this kit was tested in,
+Claude Code's own worktree check refused that write *before any hook ran*
+— so this is defence in depth, not a live hole: it makes the kit's guard
+enforce the boundary itself rather than rest on the harness. Also
+confirmed by dispatch: the payload's `cwd` for such an agent is its
+worktree, so `PATH_ROOT='cwd'` does not lock it out of its own files.
+`coder` gets `cwd`; every other policy gets `project`.
+
+The wiring:
 
 ````json
 {
@@ -174,7 +203,7 @@ The wiring, with the kit's default scopes:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='architect' ALLOW_GLOBS='{{DOC_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='architect' PATH_ROOT='project' ALLOW_GLOBS='{{DOC_GLOBS}}' DENY_GLOBS='.claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       },
@@ -183,7 +212,7 @@ The wiring, with the kit's default scopes:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='coder' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='coder' PATH_ROOT='cwd' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       },
@@ -192,7 +221,7 @@ The wiring, with the kit's default scopes:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='test-author' ALLOW_GLOBS='{{TEST_WRITE_ALLOW_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' ALLOW_GLOBS='{{TEST_WRITE_ALLOW_GLOBS}}' DENY_GLOBS='.claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json .git .git/* */.git */.git/*' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       },
@@ -201,7 +230,7 @@ The wiring, with the kit's default scopes:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='test-author' EXEMPT_GLOBS='{{TEST_READ_EXEMPT_GLOBS}}' DENY_GLOBS='{{IMPL_DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' EXEMPT_GLOBS='{{TEST_READ_EXEMPT_GLOBS}}' DENY_GLOBS='{{IMPL_DENY_GLOBS}} .claude .claude/* .git .git/* build build/* dist dist/* htmlcov htmlcov/* .coverage .coverage.* {{TOOL_CACHE_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       },
@@ -219,8 +248,38 @@ The wiring, with the kit's default scopes:
 }
 ````
 
-Each per-agent skill repeats its own entry and explains its globs. The
-last entry is only needed if `security-auditor` has Bash.
+Each per-agent skill repeats its own entry and explains its globs; the
+last entry is only needed if `security-auditor` has Bash. `coder` may also
+get an optional Bash tripwire — see `agent-kit-coder`.
+
+**A complete, tested instantiation lives in this bundle** at
+`tests/hooks/fixtures/settings.json`: every policy above, plus the
+optional `coder` Bash tripwire, filled in for a Python project laid out as
+`packages/`, `services/` and `tools/`. The kit's CI runs the behaviour
+suite in `tests/hooks/` against it on every push, so each glob in it is
+known to refuse what it must. When adapting, start from that file.
+
+Four things the template gets right that a naive version gets wrong:
+
+- **Agent configuration is denied to every write-capable agent**:
+  `.claude/`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`, at the top
+  level and nested. An agent that can rewrite `settings.json` can rewrite
+  its own fence.
+- **`test-author`'s allowlists are anchored at a top-level directory**
+  (`packages/*/tests/*`, not `*/tests/*`). A bare `*` crosses `/`, so
+  `*/tests/*` also matches `docs/spec/tests/fake.md` — tested: the old
+  glob let `test-author` write into the architect's spec tree.
+- **`test-author`'s read denylist covers derived artifacts, not just
+  source directories.** A coverage HTML report (`htmlcov/`) embeds the full
+  implementation source; git's object store holds every version of it; a
+  type checker's cache records its signatures. Tested: under a denylist
+  naming only the source trees, `test-author` could read all three, which
+  defeats the clean room without going near `packages/`. `{{TOOL_CACHE_GLOBS}}`
+  is the rest for your toolchain — for Python, `.mypy_cache .pytest_cache
+  .ruff_cache .hypothesis .uv` and each with `/*`, plus `snapshots
+  snapshots/*` if you use snapshot tests.
+- **`coder` gets `PATH_ROOT='cwd'`**, for the worktree reason above —
+  defence in depth behind the harness's own worktree check.
 
 ### 3. The write-capable agents
 
@@ -373,8 +432,25 @@ backdoor, secret exfiltration or a disabled safety check always stops.
 
 ## Verify the whole system
 
-Before trusting it with real work, run this once. Every step that says
-"dispatch" means a real subagent dispatch — nothing here can be checked by
+Before trusting it with real work, do this once. There are two layers,
+and neither substitutes for the other.
+
+**The guard logic is proven in this bundle.** `tests/hooks/` runs both
+hooks as real subprocesses — well over a thousand cases, parametrised —
+against every rule, and against the reference wiring in
+`tests/hooks/fixtures/settings.json`. It needs only Python, pytest, bash
+and jq:
+
+```bash
+python -m pytest path/to/agent-kit-skills/tests/hooks -q
+```
+
+That proves the scripts refuse what they must, for globs shaped like
+yours. It proves nothing about whether *your* `settings.json` reaches
+them — which is the failure this kit was built to catch.
+
+**The wiring is proven only by dispatch.** Every step below that says
+"dispatch" means a real subagent dispatch; nothing here can be checked by
 reading a config file.
 
 1. `bash -n` passes on both hooks, both are executable, and `jq` is
@@ -383,8 +459,15 @@ reading a config file.
    refusal text comes from the path guard. A platform message about
    "allowed working directories" instead means the guard never ran.
 3. `test-author` is denied an unscoped `Grep`, a project-root `Grep`, a
-   `Grep` at the *parent* of an implementation directory, and a `Read` of
-   an implementation file.
+   `Grep` at the *parent* of an implementation directory, a `Read` of an
+   implementation file, a `Read` of `packages/<pkg>/tests/../src/<file>`,
+   and a `Read` under `htmlcov/` or `.git/objects/`.
+3a. A worktree-isolated `coder` can still write inside its own worktree
+   — if it cannot, `PATH_ROOT` is wrong for this environment. Do **not**
+   use a write to the main checkout as the test that `PATH_ROOT='cwd'` is
+   in force: Claude Code's worktree check refuses that write before the
+   guard sees it, so it is refused whether or not the policy is right.
+   `tests/hooks/` is what exercises `PATH_ROOT` itself.
 4. `architect` is denied a write outside its doc/schema allowlist, and has
    no `Agent` tool.
 5. If `security-auditor` has Bash: it is denied a command whose name is
@@ -407,12 +490,18 @@ before anyone noticed it had never once been invoked.
 
 ## What this kit does not give you
 
-- **A sandbox.** `coder` keeps an unfenced Bash, and `path-guard.sh`
-  cannot inspect shell commands. For `coder` the boundary is a strong
-  default plus `supervisor`, not containment. `bash-guard.sh` is a real
-  fence, but it is a shell script reasoning about shell syntax, not an
-  OS-enforced boundary — it is why `security-auditor` gets paired with
-  `supervisor` once it has Bash.
+- **A sandbox.** Nothing here is OS-enforced. `coder` writes the code its
+  own test suite runs, so no command policy can stop it running arbitrary
+  code; the optional Bash tripwire makes doing so leave evidence in git and
+  removes any doubt that it was circumvention, and `supervisor` reads that
+  evidence — that is detection, not containment. `bash-guard.sh` is a
+  shell script reasoning about shell syntax, which is why
+  `security-auditor` gets paired with `supervisor` once it has Bash.
+- **Closure of every known gap.** The hooks here are complete through the
+  sixth amendment of the upstream design. A seventh and eighth amendment
+  have been specified and tested upstream but not yet implemented; the
+  gaps they name are recorded as expected failures in `tests/hooks/` and
+  listed in `VERIFICATION.md`.
 - **Protection against a bad brief.** Every constraint here is about a
   worker exceeding its instructions. A worker that does exactly what a
   wrong brief said will pass every check in the kit.
