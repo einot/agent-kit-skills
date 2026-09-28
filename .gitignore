@@ -12,3 +12,7 @@
 
 # Build/packaging output
 *.zip
+
+# Python bytecode, from running tests/hooks
+__pycache__/
+*.py[cod]

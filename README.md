@@ -28,7 +28,17 @@ into a skill:
 | `skills/agent-kit/hooks/bash-guard.sh` | a default-deny allowlist over the Bash tool, for an agent that needs read-only inspection tooling and nothing else |
 
 Every skill that needs a guard points at those same two files, so a fix
-lands once instead of in four copies. Each skill still carries everything
+lands once instead of in four copies.
+
+Both hooks **fail closed**: Claude Code blocks a tool call only when a
+hook exits 2, so a guard that crashes on input it did not expect would
+otherwise allow it. They refuse a payload they cannot read, a path with a
+`.` or `..` component, a path outside the policy's root, a search pattern
+that climbs out of the searched directory, and a NUL byte anywhere. Tested
+by dispatch against the previous version of this kit, a `test-author`
+agent read implementation source twice — once through a coverage report,
+once through a `Grep` path containing `..` — and wrote a file into the
+architect's spec tree. All three are refused now. See `VERIFICATION.md`. Each skill still carries everything
 else it needs: the agent definition to write, the `settings.json` entry
 that wires its guard, the placeholder table for adapting it, and a
 verification checklist. Nothing fetches anything at install time.
@@ -74,6 +84,37 @@ Two consequences worth knowing before you trust an install:
   whose text comes from the guard. The guard in its home project was
   reviewed nine times before anyone noticed it had never once been
   invoked.
+
+## The guards are tested here
+
+`tests/hooks/` runs both hooks as real subprocesses — 1,254 cases once
+parametrised — feeding each a `PreToolUse` payload and asserting on the
+exit status and the refusal text. The "configured" tests run every policy
+in `tests/hooks/fixtures/settings.json`, a complete instantiation of the
+wiring the skills document, so a glob change that opens a hole fails CI
+rather than someone's project. It needs Python, pytest, bash and jq:
+
+```bash
+python -m pytest tests/hooks -q
+```
+
+132 of those cases are **strict expected failures** on every platform,
+listed in `tests/hooks/pending_upstream.txt`. They encode gaps the
+upstream design has specified and tested but not yet implemented. Strict
+means that when one is fixed it fails the build until its line is removed
+— the list cannot quietly go stale. Three more fail only under bash 3.2;
+see below.
+
+This proves the guard *logic*. It does not prove your `settings.json`
+reaches the guard; only a real dispatch does that — see `agent-kit`'s
+*Verify the whole system*.
+
+**On macOS, mind the bash version.** The hooks start with
+`#!/usr/bin/env bash`, so on a Mac they run under `/bin/bash`, which is
+3.2. There, the Bash guard's literal mode — the core of the optional
+`coder` tripwire — lets two control characters, SOH and DEL, through; bash
+5 refuses them. The suite reports which bash it found in its header. Run
+it once on the machine that will run your agents.
 
 ## Developing the skills
 

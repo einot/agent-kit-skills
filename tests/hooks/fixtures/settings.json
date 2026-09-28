@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SCOPE_AGENT_TYPES='security-auditor' ALLOW_CMDS='ls cat head tail wc stat find grep rg jq diff cmp git node' ALLOW_GIT_SUBCMDS='log show diff status ls-files ls-tree cat-file blame rev-parse rev-list shortlog grep describe' ALLOW_NODE_SCRIPTS='.claude/skills/security-audit/validate-findings.cjs .claude/skills/security-audit/validate-coverage-ledger.cjs' ${CLAUDE_PROJECT_DIR}/skills/agent-kit/hooks/bash-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SCOPE_AGENT_TYPES='coder' LITERAL_ONLY='1' DENY_ADVICE='stop-and-report' ALLOW_CMDS='ls cat head tail wc stat find grep rg jq diff cmp pwd git uv make' ALLOW_GIT_SUBCMDS='status diff log show rev-parse ls-files add commit merge' ALLOW_UV_RUN_TARGETS='pytest ruff' ALLOW_MAKE_TARGETS='typecheck' WRITE_DENY_GLOBS='tests tests/* */tests */tests/* packages/acme-testkit packages/acme-testkit/* docs/spec/* docs/adr/* docs/protocol/* schemas/* .claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json /* ../* */../* .git .git/* */.git */.git/* .venv/* */.venv/* __pycache__/* */__pycache__/* conftest.py */conftest.py test_*.py */test_*.py *_test.py test*.txt */test*.txt pytest.toml */pytest.toml .pytest.toml */.pytest.toml pytest.ini */pytest.ini .pytest.ini */.pytest.ini tox.ini */tox.ini setup.cfg */setup.cfg mypy.ini */mypy.ini .mypy.ini */.mypy.ini .ruff.toml */.ruff.toml */ruff.toml uv.toml */uv.toml .python-version */.python-version sitecustomize.py */sitecustomize.py usercustomize.py */usercustomize.py pytest pytest/* ruff ruff/* mypy mypy/* GNUmakefile makefile uv.lock' ${CLAUDE_PROJECT_DIR}/skills/agent-kit/hooks/bash-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SCOPE_AGENT_TYPES='coder' PATH_ROOT='cwd' DENY_GLOBS='tests tests/* */tests */tests/* packages/acme-testkit packages/acme-testkit/* docs/spec/* docs/adr/* docs/protocol/* schemas/* .claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json /* ../* */../* .git .git/* */.git */.git/* .venv/* */.venv/* __pycache__/* */__pycache__/* conftest.py */conftest.py test_*.py */test_*.py *_test.py test*.txt */test*.txt pytest.toml */pytest.toml .pytest.toml */.pytest.toml pytest.ini */pytest.ini .pytest.ini */.pytest.ini tox.ini */tox.ini setup.cfg */setup.cfg mypy.ini */mypy.ini .mypy.ini */.mypy.ini .ruff.toml */.ruff.toml */ruff.toml uv.toml */uv.toml .python-version */.python-version sitecustomize.py */sitecustomize.py usercustomize.py */usercustomize.py pytest pytest/* ruff ruff/* mypy mypy/* GNUmakefile makefile uv.lock' ${CLAUDE_PROJECT_DIR}/skills/agent-kit/hooks/path-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SCOPE_AGENT_TYPES='architect' PATH_ROOT='project' ALLOW_GLOBS='docs/* schemas/* README.md' DENY_GLOBS='.claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json' ${CLAUDE_PROJECT_DIR}/skills/agent-kit/hooks/path-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' ALLOW_GLOBS='tests/* packages/*/tests/* services/*/tests/* tools/*/tests/* packages/acme-testkit/*' DENY_GLOBS='.claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json .git .git/* */.git */.git/* .venv/* */.venv/* __pycache__/* */__pycache__/*' ${CLAUDE_PROJECT_DIR}/skills/agent-kit/hooks/path-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' EXEMPT_GLOBS='tests tests/* packages/*/tests packages/*/tests/* services/*/tests services/*/tests/* tools/*/tests tools/*/tests/* packages/acme-testkit packages/acme-testkit/*' DENY_GLOBS='packages packages/* services services/* tools tools/* .claude .claude/* .mypy_cache .mypy_cache/* build build/* dist dist/* htmlcov htmlcov/* .hypothesis .hypothesis/* .pytest_cache .pytest_cache/* .ruff_cache .ruff_cache/* .uv .uv/* .git .git/* .coverage .coverage.* snapshots snapshots/*' ${CLAUDE_PROJECT_DIR}/skills/agent-kit/hooks/path-guard.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

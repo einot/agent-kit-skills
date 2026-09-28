@@ -207,7 +207,7 @@ the step that decides whether the guard is a boundary or a decoration:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='architect' ALLOW_GLOBS='{{DOC_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='architect' PATH_ROOT='project' ALLOW_GLOBS='{{DOC_GLOBS}}' DENY_GLOBS='.claude .claude/* */.claude */.claude/* CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json */.mcp.json' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       }
@@ -239,8 +239,15 @@ Four things about this wiring are load-bearing:
   worktree-isolated agent's checkout. Put policy changes in the main
   checkout and dispatch a probe right after.
 
-Because this is an **allowlist** (`ALLOW_GLOBS`, no `DENY_GLOBS`),
-anything not matched is denied. That is the right shape here: the
+`PATH_ROOT='project'` makes every path resolve against the project root,
+so a path outside it is refused rather than matched against some other
+base. The `DENY_GLOBS` are agent configuration — `.claude/`, `CLAUDE.md`,
+`CLAUDE.local.md`, `.mcp.json` — denied even where `{{DOC_GLOBS}}` would
+allow them: a `docs/*` allowlist admits `docs/.claude/settings.json`, and
+an agent that can rewrite settings can rewrite its own fence. Deny is
+checked before allow.
+
+Apart from those, this is an **allowlist**: anything not matched is denied. That is the right shape here: the
 architect's writable surface is small and enumerable, and a new directory
 appearing in the repo should default to "not yours".
 
