@@ -116,6 +116,16 @@ reaches the guard; only a real dispatch does that — see `agent-kit`'s
 5 refuses them. The suite reports which bash it found in its header. Run
 it once on the machine that will run your agents.
 
+**On macOS, mind the shell and the filesystem too.** Claude Code runs an
+approved Bash command under your login shell, which is zsh on a Mac, not the
+bash the guard is written in. zsh runs a command for `=(cmd)`, for a glob
+qualifier such as `*(e:cmd:)`, and for `~[name]`, none of which bash reads that
+way, so `bash-guard.sh` refuses a parenthesis outside quotes and `~[`. And the
+default macOS volume is case-insensitive, so `path-guard.sh` folds case when it
+matches `DENY_GLOBS` (`.GITHUB/x.yml` is `.github/x.yml`); `ALLOW_GLOBS` and
+`EXEMPT_GLOBS` stay exact. Both were found by an audit of a deployment; see
+`VERIFICATION.md`.
+
 ## Developing the skills
 
 Every change is checked by `scripts/validate-skills.py`, which runs in CI on

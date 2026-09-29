@@ -1130,6 +1130,74 @@ for forbidden in '<<<' '<<' '>>' '>(' '<(' '>' '<' '`'; do
   fi
 done
 
+# --- Parentheses and zsh-only expansions --------------------------------
+# This guard models bash, but Claude Code runs an approved command under the
+# user's login shell, which is zsh on macOS -- and zsh has expansions that
+# run a command and that bash spells differently or not at all:
+#
+#   * `=(cmd)`         process substitution to a temp file. The `<(` and `>(`
+#                      rejections above do not cover it, so `cat =(curl
+#                      example.com)` passed with `cat` allowed and ran curl.
+#                      (Found by an audit of a deployment, then reproduced:
+#                      the guard exited 0 and zsh ran the inner command.)
+#   * `name(e:cmd:)`   glob qualifiers. `ls *(e:'cmd':)` evaluates cmd, and
+#                      `ls *(+fn)` calls a shell function. A qualifier is
+#                      recognised on any word, not only on one with a `*`.
+#   * `~[name]`        dynamic named directories, which call the user's
+#                      `zsh_directory_name` function.
+#
+# bash reads `=(` as a syntax error and `*(N)` as a syntax error too, so none
+# of this is visible from a bash-shaped model. Every one of the constructs
+# needs a parenthesis (or the `~[` pair), so both are refused wherever a
+# shell would read them: a parenthesis is allowed only inside single or
+# double quotes, or escaped with a backslash. That keeps jq's `del(.b)`,
+# `with_entries(select(...))` and a regex group in a quoted pattern working,
+# while `cat =(...)`, `ls *(N)` and `ls README(.)` are refused.
+#
+# The scan tracks BOTH quote kinds. Tracking only single quotes is a bypass:
+# in `rg "'" f; cat =(id)` the single quote is a literal inside double
+# quotes, and a scanner that opened a quoted span there would hide the
+# `=(id)` that follows. An unterminated quote is refused. A `$` and a
+# backtick are already refused above, so the double-quote expansions that
+# run commands are unreachable.
+paren_outside_quotes() {
+  local s="$1" n="${#1}" i ch state=none
+  for (( i = 0; i < n; i++ )); do
+    ch="${s:i:1}"
+    case "$state" in
+      single)
+        [[ "$ch" == "'" ]] && state=none
+        ;;
+      double)
+        if [[ "$ch" == '\' ]]; then
+          i=$(( i + 1 ))
+        elif [[ "$ch" == '"' ]]; then
+          state=none
+        fi
+        ;;
+      *)
+        case "$ch" in
+          "'") state=single ;;
+          '"') state=double ;;
+          '\') i=$(( i + 1 )) ;;
+          '(' | ')') return 0 ;;
+        esac
+        ;;
+    esac
+  done
+  [[ "$state" != none ]]
+}
+
+if [[ "$command_str" == *'('* || "$command_str" == *')'* ]]; then
+  if paren_outside_quotes "$command_str"; then
+    deny "bash guard: the command contains a parenthesis outside quotes, or an unterminated quote. Claude Code runs an approved command under the user's login shell, which is zsh on macOS, and zsh runs a command for =(cmd), for a glob qualifier such as *(e:cmd:) or *(+fn), and for other parenthesised forms that this guard cannot vet. Parentheses are allowed only inside quotes or escaped with a backslash -- jq 'del(.b)' and rg 'a(b)' are fine. Re-run it as a plain pipeline with no unquoted parenthesis; put any output you need into your report rather than into a file."
+  fi
+fi
+
+if [[ "$command_str" == *'~['* ]]; then
+  deny "bash guard: the command contains '~[', which zsh expands by calling the user's zsh_directory_name function, running code this guard cannot inspect. Name the directory as a plain path."
+fi
+
 # --- Split into segments ------------------------------------------------
 # Order matters: `&&` and `||` must be consumed before the single `|`.
 
@@ -1585,6 +1653,38 @@ check_rg() {
   done
 }
 
+# `grep` is not one binary. On a stock Linux host it is GNU grep, which has no
+# option that writes a file or runs a program, but on a host where `grep` is
+# ugrep (Homebrew and other package managers install it under that name) it
+# has several: `--filter=COMMANDS` runs the commands you name on every file
+# it searches, `--pager[=COMMAND]` and `--view[=COMMAND]` run a program,
+# `-Q`/`--query` starts an interactive terminal UI that opens an editor,
+# `--save-config[=FILE]` writes a configuration file, `--index` writes
+# index files into the searched tree, and `--config[=FILE]` / `---[FILE]`
+# load options from a file (which can carry any of the above). GNU grep has
+# none of these, so refusing them costs nothing there and closes the hole
+# on a host where the name resolves to ugrep. Found by an audit of a
+# deployment where `grep --version` printed `ugrep 7.8.4`.
+check_grep() {
+  local token
+  for token in "$@"; do
+    if matches_long "$token" --filter --pager --view --query --save-config --config --index; then
+      deny "bash guard: 'grep ${token}' is an option this guard refuses: on a host where grep is ugrep it runs a program, opens an interactive UI, or writes or loads a configuration or index file. Search the files with the plain options instead (-n, -i, -r, -E, -F, -P, -e, -c, -l, -A, -B, -C, --include, --exclude)."
+    fi
+    case "$token" in
+      ---*)
+        deny "bash guard: 'grep ${token}' loads options from a configuration file in ugrep, which can carry options this guard refuses. Search the files with the plain options instead."
+        ;;
+    esac
+    # -Q is ugrep's query mode. Short options that take a value swallow the
+    # rest of their cluster, so they end the scan (-e, -f, -m, -A, -B, -C,
+    # -d, -D).
+    if short_cluster_has "$token" "Q" "efmABCdD"; then
+      deny "bash guard: 'grep ${token}' includes -Q, ugrep's interactive query mode, which opens an editor. Search the files with the plain options instead."
+    fi
+  done
+}
+
 check_file() {
   local token
   for token in "$@"; do
@@ -1873,11 +1973,16 @@ check_ruff() {
       deny_ruff_write "'${token}' is not a .py or .pyi file."
     fi
     rel="${token#./}"
+    # Case is folded, as path-guard.sh folds it for DENY_GLOBS: on a
+    # case-insensitive volume `CONFTEST.py` is `conftest.py`.
+    shopt -s nocasematch
     for glob in $WRITE_DENY_GLOBS; do
       if [[ "$rel" == $glob ]]; then
+        shopt -u nocasematch
         deny "bash guard: '${token}' matches '${glob}' in WRITE_DENY_GLOBS, the same fence the Edit and Write tools apply, so ruff format may not rewrite it. If it needs formatting, report it."
       fi
     done
+    shopt -u nocasematch
   done
   return 0
 }
@@ -1888,8 +1993,8 @@ check_ruff() {
 # a configuration error. Add a name here only together with the rules
 # that make it safe -- a name on this list with no rule behind it is
 # admitted with any arguments.
-KNOWN_RULE_CMDS="find git node rg sed sort file uv make"
-KNOWN_READONLY_CMDS="ls cat head tail wc stat grep jq diff cmp pwd"
+KNOWN_RULE_CMDS="find git grep node rg sed sort file uv make"
+KNOWN_READONLY_CMDS="ls cat head tail wc stat jq diff cmp pwd"
 
 # --- Validate every segment ---------------------------------------------
 
@@ -1945,6 +2050,7 @@ while IFS= read -r segment; do
     git) check_git ${args[@]+"${args[@]}"} ;;
     node) check_node ${args[@]+"${args[@]}"} ;;
     rg) check_rg ${args[@]+"${args[@]}"} ;;
+    grep) check_grep ${args[@]+"${args[@]}"} ;;
     file) check_file ${args[@]+"${args[@]}"} ;;
     uv) check_uv ${args[@]+"${args[@]}"} ;;
     make) check_make ${args[@]+"${args[@]}"} ;;

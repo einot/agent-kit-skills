@@ -2542,3 +2542,164 @@ def test_the_coder_segments_and_blanks_are_split_as_before(tmp_path: Path, comma
     """Decision 19, part 6: in literal mode, a pipe between two allowed commands
     and two blanks between words leave each segment what it was."""
     assert_allowed(coder(command, tmp_path), command)
+
+
+# --- zsh: parentheses outside quotes -------------------------------------
+#
+# Claude Code runs an approved command under the user's login shell, which is
+# zsh on macOS. zsh runs a command for `=(cmd)` (process substitution to a
+# temp file), for a glob qualifier such as `*(e:cmd:)` or `*(+fn)`, and for
+# `~[name]`. bash reads the first two as syntax errors, so a bash-shaped guard
+# never sees them. Found by an audit of a deployment: `cat =(cat CHANGES)` was
+# approved, and zsh ran the inner command. A parenthesis is now refused unless
+# it sits inside quotes or is escaped with a backslash.
+
+ZSH_PAREN_REFUSALS = [
+    ("process-substitution", "cat =(cat CHANGES)"),
+    ("process-substitution-network", "cat =(curl -sI https://example.com)"),
+    ("glob-qualifier-on-a-star", "ls *(N)"),
+    ("glob-qualifier-on-a-plain-word", "ls README(.)"),
+    ("glob-qualifier-eval", "ls *(e:id:)"),
+    ("glob-qualifier-function-call", "ls *(+fn)"),
+    ("paren-after-a-closing-single-quote", "ls 'a'(N)"),
+    ("paren-after-a-closing-double-quote", 'ls "a"(N)'),
+    ("close-paren-alone", "ls a)"),
+    ("second-segment", "ls a; cat =(id)"),
+    ("third-segment-after-a-pipe", "ls a | cat | cat =(id)"),
+    # A scanner that tracked only one quote kind would hide the payload that
+    # follows. Each of these has a quote that is a LITERAL to the shell.
+    ("hidden-behind-a-single-quote-inside-double-quotes", "rg \"'\" f; cat =(id)"),
+    ("hidden-behind-an-escaped-double-quote", 'rg "\\"" f; ls *(N)'),
+    ("hidden-behind-a-double-quote-inside-single-quotes", "rg '\"' f; ls *(N)"),
+    ("escaped-paren-then-a-real-one", r"ls x\(N)"),
+    ("escaped-equals-then-paren", r"cat \=(id)"),
+    ("unterminated-single-quote-then-paren", "rg 'x ("),
+    ("unterminated-double-quote-then-paren", 'rg "x ('),
+]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [command for _, command in ZSH_PAREN_REFUSALS],
+    ids=[case_id for case_id, _ in ZSH_PAREN_REFUSALS],
+)
+def test_a_parenthesis_outside_quotes_is_refused(tmp_path: Path, command: str) -> None:
+    reason = assert_denied(auditor(command, tmp_path), repr(command))
+    assert_phrase(reason, "parenthesis", repr(command))
+    assert_phrase(reason, "zsh", repr(command))
+
+
+ZSH_PAREN_ALLOWED = [
+    ("jq-del", "jq 'del(.b)' CHANGES"),
+    ("jq-with-entries", "jq -c 'with_entries(select(.key==\"a\"))' CHANGES"),
+    ("single-quoted-regex-group", "rg 'foo(bar)' ."),
+    ("double-quoted-regex-group", 'rg "foo(bar)" .'),
+    ("escaped-parens", r"rg \(x\) ."),
+    ("equals-paren-inside-single-quotes", "cat '=(x)'"),
+    ("equals-paren-inside-double-quotes", 'cat "=(x)"'),
+    ("paren-after-a-double-quote-inside-single-quotes", "rg '\"(' f"),
+    ("apostrophe-inside-double-quotes-then-a-quoted-paren", 'rg "it\'s (x)" f'),
+    ("no-paren-at-all", "git log --oneline"),
+]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [command for _, command in ZSH_PAREN_ALLOWED],
+    ids=[case_id for case_id, _ in ZSH_PAREN_ALLOWED],
+)
+def test_a_parenthesis_inside_quotes_or_escaped_is_allowed(tmp_path: Path, command: str) -> None:
+    assert_allowed(auditor(command, tmp_path), command)
+
+
+def test_an_unterminated_quote_without_a_parenthesis_is_left_to_the_shell(tmp_path: Path) -> None:
+    """Nothing runs: the shell rejects the command as a syntax error."""
+    assert_allowed(auditor("rg 'x", tmp_path), "an unterminated quote with no parenthesis")
+
+
+def test_a_zsh_dynamic_named_directory_is_refused(tmp_path: Path) -> None:
+    reason = assert_denied(auditor("ls ~[x]", tmp_path), "ls ~[x]")
+    assert_phrase(reason, "~[", "ls ~[x]")
+
+
+# --- grep: the options of a ugrep that answers to the name `grep` ---------
+#
+# GNU grep has no option that writes a file or runs a program. ugrep, which
+# package managers install under the name `grep`, has several. Found by an
+# audit of a deployment where `grep --version` printed `ugrep 7.8.4`.
+
+GREP_REFUSALS = [
+    "grep --filter=pdf:cat -r a .",
+    "grep --filter pdf:cat a f",
+    "grep --save-config=x a f",
+    "grep --save-config a f",
+    "grep --config=x a f",
+    "grep --index -r a .",
+    "grep --pager=less a f",
+    "grep --view=vi a f",
+    "grep --query a",
+    "grep -Q a",
+    "grep -rQ a .",
+    "grep -nQ a f",
+    "grep --fil=pdf:cat a f",
+    "grep --sav=x a f",
+    "grep --conf=x a f",
+    "grep --pag=less a f",
+    "grep --ind -r a .",
+    "grep ---=x a f",
+    "grep ---",
+]
+
+
+@pytest.mark.parametrize("command", GREP_REFUSALS, ids=GREP_REFUSALS)
+def test_a_grep_option_that_writes_or_runs_a_program_is_refused(
+    tmp_path: Path, command: str
+) -> None:
+    reason = assert_denied(auditor(command, tmp_path), command)
+    assert_phrase(reason, "grep", command)
+
+
+GREP_ALLOWED = [
+    "grep -n foo README.md",
+    "grep -rn --include=*.go foo .",
+    "grep -rin --color=never foo .",
+    r"grep -P '\x7b' f",
+    "grep -c foo f",
+    "grep --count foo f",
+    "grep -m 5 -e foo f",
+    "grep -A 2 -B 2 foo f",
+    "grep --files-with-matches foo .",
+    "grep --file=patterns.txt f",
+    "grep --quiet foo f",
+    "grep --context=3 foo f",
+    "grep --color foo f",
+]
+
+
+@pytest.mark.parametrize("command", GREP_ALLOWED, ids=GREP_ALLOWED)
+def test_plain_grep_options_stay_allowed(tmp_path: Path, command: str) -> None:
+    assert_allowed(auditor(command, tmp_path), command)
+
+
+def test_the_coder_policy_applies_the_grep_rule_too(tmp_path: Path) -> None:
+    assert_denied(coder("grep -Q a f", tmp_path), "grep -Q under the coder policy")
+    assert_denied(coder("grep --filter=x a f", tmp_path), "grep --filter under the coder policy")
+    assert_allowed(coder("grep -n foo README.md", tmp_path), "plain grep under the coder policy")
+
+
+# --- case: WRITE_DENY_GLOBS fold it --------------------------------------
+#
+# The same rule as path-guard.sh's DENY_GLOBS, for the Bash route to the same
+# files: on a case-insensitive volume `CONFTEST.py` is `conftest.py`.
+
+
+@pytest.mark.parametrize(
+    "path", ["conftest.py", "CONFTEST.py", "Conftest.py", "TESTS/x.py", "pkg/Tests/test_a.py"]
+)
+def test_ruff_format_refuses_a_write_denied_file_in_any_case(tmp_path: Path, path: str) -> None:
+    reason = assert_denied(coder(f"uv run --locked ruff format {path}", tmp_path), path)
+    assert_phrase(reason, "WRITE_DENY_GLOBS", path)
+
+
+def test_ruff_format_still_formats_an_ordinary_file(tmp_path: Path) -> None:
+    assert_allowed(coder("uv run --locked ruff format src/a.py", tmp_path), "ruff format src/a.py")

@@ -593,7 +593,24 @@ if [[ -n "${EXEMPT_GLOBS:-}" ]] && matches_any "$rel" $EXEMPT_GLOBS; then
   exit 0
 fi
 
-if [[ -n "${DENY_GLOBS:-}" ]] && matches_any "$rel" $DENY_GLOBS; then
+# DENY_GLOBS match without regard to case; EXEMPT_GLOBS and ALLOW_GLOBS stay
+# exact. On a case-insensitive volume (the macOS and Windows default) a
+# case variant names the same file the denylist protects -- `.GITHUB/x.yml`
+# opens `.github/x.yml` -- and a case-sensitive `[[ == ]]` would let it
+# through a denylist-only policy. Folding case here can only refuse more,
+# never allow more: on a case-sensitive volume it over-denies a differently
+# cased sibling, which fails closed. The allow and exempt lists are left
+# exact on purpose, because folding those would admit a case variant that
+# is a DIFFERENT file on a case-sensitive volume.
+matches_any_ci() {
+  local rc=1
+  shopt -s nocasematch
+  matches_any "$@" && rc=0
+  shopt -u nocasematch
+  return "$rc"
+}
+
+if [[ -n "${DENY_GLOBS:-}" ]] && matches_any_ci "$rel" $DENY_GLOBS; then
   deny "path guard: '$rel' is out of scope for this agent (matched DENY_GLOBS)."
 fi
 
