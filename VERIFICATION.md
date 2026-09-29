@@ -190,3 +190,20 @@ says when it applies:
   Code 2.1.273 and may differ elsewhere; the guard does not rely on it.
 - `security-auditor` running the upgraded `bash-guard.sh` by dispatch. Its
   policy is unchanged, and the configured tests pass against it.
+
+## Found by an outside audit of a deployment
+
+A senior security audit of these two scripts as deployed on macOS, checked
+against the running guards, found three ways past them. All three depend on
+the host, which is why the behaviour suite, written against bash on Linux, did
+not see them. Each was reproduced and is now closed and tested.
+
+| Finding | Cause | Fix |
+| --- | --- | --- |
+| `cat =(cat CHANGES)` was approved and ran; so would `cat =(<any command>)` | The host runs an approved command under zsh. zsh runs a command for `=(cmd)`, for a glob qualifier `*(e:cmd:)` or `*(+fn)` and for `~[name]`; bash reads the first two as syntax errors, so a bash-shaped guard never sees them | `bash-guard.sh` refuses a parenthesis outside quotes (single, double or backslash-escaped) and `~[`. The scan tracks both quote kinds, because tracking one lets `rg "'" f; cat =(id)` hide its payload |
+| `.GITHUB/workflows/ci.yml` passed the coder's `DENY_GLOBS`; `INTERNAL/...` passed the test-author's read denylist | Globs were matched with case-sensitive `[[ == ]]`; the default macOS volume is case-insensitive, so a case variant names the same file | `DENY_GLOBS` (and the Bash guard's `WRITE_DENY_GLOBS`) fold case. `ALLOW_GLOBS` and `EXEMPT_GLOBS` stay exact, so a variant cannot be admitted. The coder wiring gains `EXEMPT_GLOBS='Makefile'`, because folding makes the `makefile` shadow-file entry match `Makefile` itself |
+| `grep --save-config` could write a file; `grep --filter` could run a program | `grep` was on the read-only list with no option rule, but on a host where `grep` is ugrep it has options that write files, run programs and open an editor | `grep` has its own rule refusing `--filter`, `--pager`, `--view`, `--query`/`-Q`, `--save-config`, `--config`, `---` and `--index`, with abbreviations. GNU grep has none of them, so nothing is lost there |
+
+The audit also found that an agent given the fenced Bash used the zsh bypass
+to run a command the guard never vetted, which is the strongest evidence
+here that a fence is a strong default and not containment.

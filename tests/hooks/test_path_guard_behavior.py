@@ -533,6 +533,20 @@ WRITE_CASES = [
     ("coder", NESTED_TEST_FILE, False),
     ("coder", SPEC_FILE, False),
     ("coder", SCHEMA_FILE, False),
+    # A case variant names the same file on a case-insensitive volume (the
+    # macOS and Windows default), so a denylist folds case and the coder's
+    # fence must hold against it. An allowlist does NOT fold case: the
+    # architect and test-author variants below are refused because they match
+    # no allow glob.
+    ("coder", "TESTS/test_x.py", False),
+    ("coder", "Packages/Acme-Core/TESTS/test_x.py", False),
+    ("coder", "DOCS/SPEC/overview.md", False),
+    ("coder", "Schemas/x.json", False),
+    ("coder", ".CLAUDE/settings.json", False),
+    ("coder", "CLAUDE.MD", False),
+    ("coder", "Conftest.py", False),
+    ("architect", "DOCS/spec/overview.md", False),
+    ("test-author", "TESTS/test_x.py", False),
     ("architect", SPEC_FILE, True),
     ("architect", SCHEMA_FILE, True),
     ("architect", IMPLEMENTATION_FILE, False),
@@ -667,6 +681,12 @@ READ_CASES = [
     ("Read", TOOL_FILE, False),
     ("Grep", "docs", True),
     ("Grep", "tests", True),
+    # Case variants of the denied implementation trees: the read denylist folds
+    # case, because on a case-insensitive volume these name the same files.
+    ("Read", "PACKAGES/acme-core/src/acme/core/x.py", False),
+    ("Read", "Services/trie/src/x.py", False),
+    ("Grep", "PACKAGES", False),
+    ("Grep", "Packages/acme-core/src", False),
     ("Grep", "packages", False),
     ("Grep", "packages/acme-core/src", False),
     ("Grep", "services", False),
@@ -4221,3 +4241,55 @@ def test_a_long_coder_path_is_decided_within_the_timeout(tmp_path: Path) -> None
     assert_allowed_silently(
         result, f"a coder Write of <tmp>/a, /test_a {LONG_PATH_COMPONENTS} times, then .md"
     )
+
+
+# --- case: DENY_GLOBS fold it, ALLOW_GLOBS and EXEMPT_GLOBS do not --------
+#
+# The guard matches a path as text. On a case-insensitive volume a case
+# variant opens the same file, so a denylist that compared case-sensitively
+# was bypassed by `.GITHUB/x.yml` for `.github/x.yml`. Folding case in
+# DENY_GLOBS can only refuse more. The allow and exempt lists stay exact,
+# because folding those would ADMIT a variant that is a different file on a
+# case-sensitive volume.
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["TESTS/x.py", "Tests/x.py", "tests/X.PY", "pkg/TESTS/x.py", "pkg/Tests/sub/x.py"],
+)
+def test_deny_globs_match_without_regard_to_case(path: str) -> None:
+    result = run_guard("Write", policy=DENY_TESTS, file_path=under_repo(path))
+    assert_denied(result, f"a case variant of a denied path: {path}")
+
+
+def test_deny_globs_still_allow_an_unrelated_path_in_any_case() -> None:
+    result = run_guard("Write", policy=DENY_TESTS, file_path=under_repo("SRC/x.py"))
+    assert_allowed(result, "an unrelated path written in capitals")
+
+
+def test_allow_globs_stay_case_exact() -> None:
+    assert_allowed(
+        run_guard("Write", policy=ALLOW_DOCS, file_path=under_repo("docs/x.md")),
+        "the allowed spelling",
+    )
+    result = run_guard("Write", policy=ALLOW_DOCS, file_path=under_repo("DOCS/x.md"))
+    assert_denied(result, "a case variant of an allowed path, which is not on the allowlist")
+
+
+def test_exempt_globs_stay_case_exact() -> None:
+    policy = {"EXEMPT_GLOBS": "tests/*", "DENY_GLOBS": "tests/*"}
+    assert_allowed(
+        run_guard("Read", policy=policy, file_path=under_repo("tests/x.py")),
+        "the exempt spelling",
+    )
+    result = run_guard("Read", policy=policy, file_path=under_repo("TESTS/x.py"))
+    assert_denied(result, "a case variant of an exempt path, which is not exempt and is denied")
+
+
+def test_folding_case_for_deny_globs_does_not_leak_into_the_other_checks() -> None:
+    """`shopt -s nocasematch` is switched on for the denylist only and off
+    again, so the plain-form and root rules keep their exact behaviour."""
+    policy = {"DENY_GLOBS": "zzz/*"}
+    for path in ("a/../b.py", "~/x.py", "a//b.py"):
+        result = run_guard("Write", policy=policy, file_path=path)
+        assert_denied(result, f"the out-of-plain-form path {path!r}")

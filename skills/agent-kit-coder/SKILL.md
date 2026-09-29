@@ -133,7 +133,7 @@ anything around it.
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='coder' PATH_ROOT='cwd' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='coder' PATH_ROOT='cwd' EXEMPT_GLOBS='Makefile' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       }
@@ -189,6 +189,18 @@ this agent specifically:
   write was not denied. So a policy change must land in the main checkout
   before the probe that tests it — editing the file the agent can see
   changes nothing.
+
+**`DENY_GLOBS` match without regard to case; `EXEMPT_GLOBS` and `ALLOW_GLOBS`
+do not.** On a case-insensitive volume (the macOS and Windows default) a case
+variant opens the same file, so a denylist that compared case-sensitively was
+bypassed by `.GITHUB/workflows/ci.yml` for `.github/workflows/ci.yml`. It costs
+one thing you must know about: the denylist entry `makefile` (which stops the
+agent creating a file that `make` reads in preference to the reviewed
+`Makefile`) now also matches `Makefile` itself. That is why the wiring carries
+`EXEMPT_GLOBS='Makefile'`: the exemption is checked first and stays exact, so
+the coder can edit `Makefile` but not `makefile`, `MAKEFILE` or `GNUmakefile`.
+Any other denylist entry that differs from a file you *do* want the coder to
+edit only by case needs the same exact-case exemption.
 
 This one is a **denylist** (`DENY_GLOBS`, no `ALLOW_GLOBS`), unlike
 `architect`'s and `test-author`'s allowlists. That is deliberate:

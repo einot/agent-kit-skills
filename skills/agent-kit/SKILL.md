@@ -215,7 +215,7 @@ The wiring:
         "hooks": [
           {
             "type": "command",
-            "command": "SCOPE_AGENT_TYPES='coder' PATH_ROOT='cwd' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+            "command": "SCOPE_AGENT_TYPES='coder' PATH_ROOT='cwd' EXEMPT_GLOBS='Makefile' DENY_GLOBS='{{DENY_GLOBS}}' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
           }
         ]
       },
