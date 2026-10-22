@@ -3370,7 +3370,6 @@ def test_a_guarded_write_whose_path_ends_with_a_newline_is_refused() -> None:
 
 TRAILING_NEWLINE_CONTROLS: list[tuple[str, str]] = [
     ("plain", under_repo("docs/x.md")),
-    ("newline-inside-a-name", f"{REPO_ROOT}/docs/a\nb.md"),
 ]
 
 
@@ -3379,11 +3378,13 @@ TRAILING_NEWLINE_CONTROLS: list[tuple[str, str]] = [
     [path for _, path in TRAILING_NEWLINE_CONTROLS],
     ids=[case_id for case_id, _ in TRAILING_NEWLINE_CONTROLS],
 )
-def test_a_newline_inside_a_path_is_judged_as_written(
+def test_a_path_without_a_trailing_newline_is_judged_as_written(
     path: str,
 ) -> None:
     """Decision 17, "The trailing newline": only a newline at the end is
-    refused. A newline inside a name is carried intact and judged as written."""
+    refused by that rule. Its other control, a newline inside a name, is
+    refused here instead, by this kit's ASCII rule (see the ASCII paths
+    section below)."""
     result = run_configured_rooted("architect", EDIT_WRITE, "Write", path)
     assert_allowed_silently(result, f"architect writing {repo_relative_id(path)!r}")
 
@@ -4141,8 +4142,6 @@ def test_a_write_with_a_leading_space_is_refused_for_the_caller_a_scoped_policy_
 
 EDGE_CONTROLS: list[tuple[str, str]] = [
     ("space-inside-a-name", under_repo("docs/a b.md")),
-    ("tab-inside-a-name", under_repo("docs/a\tb.md")),
-    ("non-ascii-letter-last", DOCS_X_PATH + "\xe9"),
 ]
 
 
@@ -4151,12 +4150,12 @@ EDGE_CONTROLS: list[tuple[str, str]] = [
     [path for _, path in EDGE_CONTROLS],
     ids=[case_id for case_id, _ in EDGE_CONTROLS],
 )
-def test_whitespace_inside_a_path_or_a_letter_at_its_end_is_judged_as_written(
-    path: str,
-) -> None:
-    """Decision 26: trimming reaches only the ends, so a space or a tab inside a
-    name names exactly what it spells, and a letter outside ASCII is not an edge
-    character. Each Write is in the architect's scope and allowed."""
+def test_a_space_inside_a_path_is_judged_as_written(path: str) -> None:
+    """Decision 26: trimming reaches only the ends, so a space inside a name
+    names exactly what it spells. The Write is in the architect's scope and
+    allowed. Decision 26's other two controls -- a tab inside a name and a
+    non-ASCII letter at the end -- are refused here instead, by this kit's ASCII
+    rule (see the ASCII paths section below)."""
     result = run_configured_rooted("architect", EDIT_WRITE, "Write", path)
     assert_allowed_silently(result, f"architect writing {edge_id(path)}")
 
@@ -4382,3 +4381,108 @@ def test_folding_case_for_deny_globs_does_not_leak_into_the_other_checks() -> No
     for path in ("a/../b.py", "~/x.py", "a//b.py"):
         result = run_guard("Write", policy=policy, file_path=path)
         assert_denied(result, f"the out-of-plain-form path {path!r}")
+
+
+# --- ASCII paths ------------------------------------------------------------
+#
+# This kit's rule, not upstream's: under a guarded policy, a path whose part
+# below the policy's root holds a byte outside printable ASCII is refused. On a
+# case-insensitive volume a Unicode case variant could name a denied path while
+# missing every deny glob -- U+017F, the long s, folds to `s` -- and no bash glob
+# reproduces Unicode folding. It departs from upstream's decision 26, which
+# admits a non-ASCII letter in a path; the two decision-26 controls it reverses
+# are the first two cases below, and the decision-17 control (a newline inside a
+# name) the third.
+
+ASCII_PHRASE = "outside printable ASCII"
+
+NON_ASCII_REFUSALS: list[tuple[str, str, frozenset[str], str, str]] = [
+    ("architect-Write-non-ascii-letter-last", "architect", EDIT_WRITE, "Write",
+     DOCS_X_PATH + "\xe9"),
+    ("architect-Write-tab-inside-a-name", "architect", EDIT_WRITE, "Write",
+     under_repo("docs/a\tb.md")),
+    ("architect-Write-newline-inside-a-name", "architect", EDIT_WRITE, "Write",
+     f"{REPO_ROOT}/docs/a\nb.md"),
+    ("coder-Write-long-s-for-tests", "coder", EDIT_WRITE, "Write",
+     under_repo("te\u017fts/helpers.py")),
+    ("coder-Edit-non-ascii", "coder", EDIT_WRITE, "Edit",
+     under_repo("services/ingest/src/acme/ingest/\u00e4pp.py")),
+    ("architect-Edit-control-inside", "architect", EDIT_WRITE, "Edit",
+     under_repo("docs/a\x01b.md")),
+    ("test-author-Read-non-ascii", "test-author", READ_GREP_GLOB, "Read",
+     under_repo("tests/\u00e9.py")),
+    ("test-author-Read-long-s-for-services", "test-author", READ_GREP_GLOB, "Read",
+     under_repo("\u017fervices/ingest/src/acme/ingest/app.py")),
+    ("test-author-Grep-path-non-ascii", "test-author", READ_GREP_GLOB, "Grep",
+     under_repo("tests/\u00e9")),
+    ("test-author-Glob-path-non-ascii", "test-author", READ_GREP_GLOB, "Glob",
+     under_repo("tests/\u00e9")),
+]
+
+
+@pytest.mark.parametrize(
+    ("agent_name", "tools", "tool_name", "path"),
+    [case[1:] for case in NON_ASCII_REFUSALS],
+    ids=[case[0] for case in NON_ASCII_REFUSALS],
+)
+def test_a_path_outside_printable_ascii_is_refused(
+    agent_name: str, tools: frozenset[str], tool_name: str, path: str
+) -> None:
+    """A Write, Edit, Read, Grep or Glob path with a non-ASCII or control byte
+    below the root is refused under every configured policy, whatever its globs
+    would say: `te\u017fts/helpers.py` matches none of the coder's deny globs,
+    `\u017fervices/...` none of the test-author's read denials, and
+    `tests/\u00e9.py` would match the test-author's read exemptions."""
+    result = run_configured_rooted(agent_name, tools, tool_name, path)
+    reason = assert_denied(result, f"{agent_name} {tool_name} of {edge_id(path)}")
+    assert ASCII_PHRASE in reason, reason
+
+
+# Glob's `pattern` and Grep's `glob` are held to ASCII by the search-pattern
+# rule (decision 21), not by the ASCII path rule; these pin that they stay so.
+NON_ASCII_SEARCH_PATTERNS: list[tuple[str, str, dict[str, Any]]] = [
+    ("Glob-pattern", "Glob", {"path": "tests", "pattern": "\u00e9*.py"}),
+    ("Grep-glob", "Grep", {"path": "tests", "pattern": "PROBE", "glob": "*.\u00e9"}),
+]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    [case[1:] for case in NON_ASCII_SEARCH_PATTERNS],
+    ids=[case[0] for case in NON_ASCII_SEARCH_PATTERNS],
+)
+def test_a_search_pattern_outside_ascii_is_refused(
+    tool_name: str, tool_input: dict[str, Any]
+) -> None:
+    result = run_test_author_search(tool_name, tool_input)
+    reason = assert_denied(result, f"test-author {tool_name} with {ascii(tool_input)}")
+    assert "may contain only letters, digits" in reason, reason
+
+
+def test_only_the_part_below_the_root_is_held_to_ascii() -> None:
+    """A project that lives under a non-ASCII directory keeps working: the rule
+    judges the part every glob list matches, not the root's own spelling."""
+    root = "/srv/pr\u00f8ject"
+    policy = {"PATH_ROOT": "project", "ALLOW_GLOBS": "docs/*"}
+    result = run_rooted(
+        "Write", policy=policy, file_path=f"{root}/docs/x.md", cwd=root, project_dir=root
+    )
+    assert_allowed_silently(result, "a Write to docs/x.md under a non-ASCII project root")
+
+
+def test_the_ascii_rule_leaves_an_unguarded_caller_alone() -> None:
+    """The rule runs after the routing: the top-level session, which a scoped
+    policy does not name, is not refused a non-ASCII path."""
+    policy, script = configured_policy("architect", EDIT_WRITE)
+    path = DOCS_X_PATH + "\xe9"
+    result = run_rooted("Write", policy=policy, file_path=path, script=script)
+    assert_allowed_silently(result, f"the session writing {edge_id(path)}")
+
+
+def test_the_plain_form_rule_runs_before_the_ascii_rule() -> None:
+    """A path out of plain form keeps that denial, whatever else it holds."""
+    path = under_repo("docs/../\u00e9.md")
+    result = run_configured_rooted("architect", EDIT_WRITE, "Write", path)
+    reason = assert_denied(result, f"architect writing {edge_id(path)}")
+    assert "'.' or '..' component" in reason, reason
+    assert ASCII_PHRASE not in reason, reason

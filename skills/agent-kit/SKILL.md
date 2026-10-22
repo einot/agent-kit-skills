@@ -58,8 +58,9 @@ allows it. Both scripts now refuse a payload they cannot read as a single
 tool call, and turn any exit other than 0 or 2 into a denial. They also
 refuse a path with a `.` or `..` component — `tests/../packages` matches a
 `tests/*` exemption as text while naming the implementation — a path
-outside the policy's root, a search pattern that climbs out of the searched
-directory, and a NUL byte anywhere. `VERIFICATION.md` records which of
+outside the policy's root, a guarded path outside printable ASCII, a search
+pattern that climbs out of the searched directory, a Bash command over
+2,048 bytes, and a NUL byte anywhere. `VERIFICATION.md` records which of
 these were exploitable end to end by a dispatched agent and which were
 weaknesses of the hook alone.
 

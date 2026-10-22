@@ -14,18 +14,19 @@
 # sections are the ones that then passed on Linux.
 
 [amendment-7-8]
-# Strict, every platform. ADR-0018's seventh and eighth amendments: 45 of
-# these functions were introduced by the amendment tests (upstream 11ece0f,
-# bf327b2), and one existing function's expectation was changed by the
-# eighth amendment. The implementation briefs (C8, C9) have not landed.
+# Strict, every platform. ADR-0018's seventh and eighth amendments: 43 test
+# functions as listed here, all but one introduced by the amendment tests
+# (upstream 11ece0f, bf327b2), and one an existing function whose expectation
+# the eighth amendment changed. The implementation briefs (C8, C9) have not landed.
+# Decision 25's command bound is no longer listed: this kit bounds a command
+# at 2048 bytes by its owner's decision, its tests encode that bound, and they
+# pass (see VERIFICATION.md).
 test_bash_guard_behavior.py::test_a_bash_command_that_fails_with_status_2_gets_the_backstop_denial
 test_bash_guard_behavior.py::test_a_bash_cwd_that_cannot_be_read_faithfully_gets_the_backstop_denial[nul]
 test_bash_guard_behavior.py::test_a_bash_cwd_that_cannot_be_read_faithfully_gets_the_backstop_denial[trailing-newline]
 test_bash_guard_behavior.py::test_a_bash_extraction_line_that_reads_its_field_as_empty_gets_the_backstop_denial[agent_type]
 test_bash_guard_behavior.py::test_a_bash_extraction_line_that_reads_its_field_as_empty_gets_the_backstop_denial[command]
 test_bash_guard_behavior.py::test_a_bash_extraction_line_that_reads_its_field_as_empty_gets_the_backstop_denial[tool_name]
-test_bash_guard_behavior.py::test_a_command_over_16384_characters_is_refused[1000000-characters]
-test_bash_guard_behavior.py::test_a_command_over_16384_characters_is_refused[16385-characters]
 test_bash_guard_behavior.py::test_a_payload_holding_a_raw_nul_or_u0002_gets_the_bash_shape_denial[nul-after-the-closing-brace-auditor-policy-no-agent-type]
 test_bash_guard_behavior.py::test_a_payload_holding_a_raw_nul_or_u0002_gets_the_bash_shape_denial[nul-after-the-closing-brace-coder-policy-no-agent-type]
 test_bash_guard_behavior.py::test_a_payload_holding_a_raw_nul_or_u0002_gets_the_bash_shape_denial[nul-after-the-closing-brace-coder]
@@ -62,7 +63,6 @@ test_bash_guard_behavior.py::test_ruff_format_refuses_an_operand_out_of_plain_fo
 test_bash_guard_behavior.py::test_ruff_format_refuses_an_operand_through_a_linked_directory
 test_bash_guard_behavior.py::test_ruff_format_refuses_an_operand_under_a_link_inside_a_directory
 test_bash_guard_behavior.py::test_ruff_format_refuses_the_plain_testkit_spelling_with_the_lists_refusal
-test_bash_guard_behavior.py::test_the_coders_denial_of_a_long_command_carries_the_paragraph
 test_bash_guard_behavior.py::test_the_lists_refusal_is_the_write_mode_denial[pytest/__main__.py]
 test_bash_guard_behavior.py::test_the_lists_refusal_is_the_write_mode_denial[services/x/src/y/tests/test_z.py]
 test_bash_guard_behavior.py::test_the_lists_refusal_is_the_write_mode_denial[tests/config/test_x.py]

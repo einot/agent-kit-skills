@@ -56,7 +56,9 @@ naming status 0; a status 2 that `deny` did not make gets the backstop denial;
 and an extraction that reads a field as empty that is not, or a `cwd` that
 ends with a newline or holds a NUL, is refused with the backstop denial.
 Decision 25 refuses an in-scope command longer than 16384 characters, after
-the routing and before literal mode, under every policy. Decision 7 refuses a
+the routing and before literal mode, under every policy; this kit departs from
+it by its owner's decision and refuses one longer than 2048 UTF-8 bytes, in the
+same place, with its own text (see VERIFICATION.md). Decision 7 refuses a
 write-mode `ruff format` operand that is a directory or a symbolic link.
 Decision 12 (f) puts the testkit on the coder's `WRITE_DENY_GLOBS` at step W.
 Group Q fails until brief C8 lands, except its controls, the raw U+0002 cases
@@ -1785,15 +1787,24 @@ def test_a_bash_shape_check_that_fails_denies_on_stderr(tmp_path: Path) -> None:
 # itself (`raw_bytes`); it goes through `run_guard_stdin`, which sends it
 # unchanged.
 
-# Decision 25's denial, verbatim, with the ADR's blockquote line breaks joined by
-# single spaces. It is ASCII only.
-BOUND_MESSAGE = (
-    "bash guard: the command is longer than 16384 characters, which "
-    "is more than this guard vets in one call, so that vetting it stays well "
-    "inside the hook's time limit. Split it into shorter commands. The command "
-    "is refused."
-)
-BOUND_PHRASE = "longer than 16384 characters"
+# The command bound. Upstream's decision 25 bounds a command at 16384
+# characters; this kit departs from it and bounds the raw command at 2048 UTF-8
+# bytes, with its own denial (see VERIFICATION.md). The text is ASCII only.
+BOUND_BYTES = 2048
+BOUND_PHRASE = "more than this guard's limit of 2048 bytes"
+
+
+def bound_message(command_bytes: int) -> str:
+    """The bound's denial, verbatim, for a command of `command_bytes` bytes."""
+    return (
+        f"bash guard: the command is {command_bytes} bytes long, more than this "
+        "guard's limit of 2048 bytes (UTF-8 bytes, not characters). Some of the "
+        "checks this guard runs grow faster than the command's length, and a check "
+        "that ran past the hook's time limit could let a command through "
+        "unchecked, so a longer command is refused outright. Split the work into "
+        "several shorter commands. The command is refused."
+    )
+
 
 # Decision 7's phrase for a write-mode operand that is a directory or a link.
 DIRECTORY_OR_LINK_PHRASE = "is a directory or a symbolic link"
@@ -2177,19 +2188,54 @@ def test_a_bash_nul_gate_killed_by_a_signal_gets_the_not_checked_denial(tmp_path
     assert "(the check ended with status 137 instead" in body, body
 
 
-# Decision 25, rule 2, brief T6 item 10: the command bound.
+# Decision 25, rule 2, brief T6 item 10: the command bound, as this kit departs
+# from it -- 2048 UTF-8 bytes of the raw command rather than 16384 characters.
 
 AT_THE_BOUND = "ls" + " a" * 8191
 OVER_THE_BOUND = AT_THE_BOUND + "a"
 FAR_OVER_THE_BOUND = "ls" + " a" * 499_999
 
 
-def test_a_command_of_16384_characters_is_allowed(tmp_path: Path) -> None:
-    """Decision 25, rule 2: a command of exactly 16384 characters is within the
-    bound, and the auditor's policy allows it."""
+def test_a_command_of_16384_characters_is_refused_by_the_byte_bound(tmp_path: Path) -> None:
+    """A command of exactly 16384 characters, which decision 25 would allow, is
+    over this kit's 2048-byte bound, and is refused with the bound's text."""
     assert len(AT_THE_BOUND) == 16384
-    result = auditor(AT_THE_BOUND, tmp_path)
-    assert_allowed(result, "ls and 8191 words, 16384 characters, under the auditor's policy")
+    reason = assert_denied(auditor(AT_THE_BOUND, tmp_path), "a command of 16384 characters")
+    assert reason == bound_message(16384), (
+        f"expected: {bound_message(16384)!r}\nreason:   {reason!r}"
+    )
+
+
+# `ls` and one argument, at and one byte over the bound, in ASCII and in a
+# two-byte letter. The multibyte commands are about half as many characters as
+# bytes, so a bound on characters would allow both of them.
+BYTE_BOUND_CASES = [
+    ("ascii-2048-bytes", "ls " + "a" * 2045, True),
+    ("ascii-2049-bytes", "ls " + "a" * 2046, False),
+    ("multibyte-2048-bytes-1026-characters", "ls " + "\u00e4" * 1022 + "a", True),
+    ("multibyte-2049-bytes-1026-characters", "ls " + "\u00e4" * 1023, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("command", "allowed"),
+    [case[1:] for case in BYTE_BOUND_CASES],
+    ids=[case[0] for case in BYTE_BOUND_CASES],
+)
+def test_the_bound_is_2048_bytes_of_utf8(tmp_path: Path, command: str, allowed: bool) -> None:
+    """2048 bytes is allowed and 2049 refused, and the count is UTF-8 bytes, not
+    characters: 1026 characters of which 1023 are a two-byte letter is 2049
+    bytes, and is refused."""
+    size = len(command.encode("utf-8"))
+    assert size in (BOUND_BYTES, BOUND_BYTES + 1)
+    result = auditor(command, tmp_path)
+    if allowed:
+        assert_allowed(result, f"a command of {size} bytes")
+    else:
+        reason = assert_denied(result, f"a command of {size} bytes")
+        assert reason == bound_message(size), (
+            f"expected: {bound_message(size)!r}\nreason:   {reason!r}"
+        )
 
 
 @pytest.mark.parametrize(
@@ -2198,16 +2244,18 @@ def test_a_command_of_16384_characters_is_allowed(tmp_path: Path) -> None:
     ids=["16385-characters", "1000000-characters"],
 )
 def test_a_command_over_16384_characters_is_refused(tmp_path: Path, command: str) -> None:
-    """Decision 25, rule 2: under every policy, the auditor's included, a longer
-    command is refused before literal mode and every per-word rule, so even a
-    command of a million characters is decided within the helper's timeout. The
-    auditor sets no DENY_ADVICE, so the denial is decision 25's text alone."""
+    """Decision 25, rule 2, as this kit bounds it: under every policy, the
+    auditor's included, a longer command is refused before literal mode and
+    every per-word rule, so even a command of a million characters is decided
+    within the helper's timeout. The auditor sets no DENY_ADVICE, so the denial
+    is the bound's text alone."""
     assert len(command) in (16385, 1_000_000)
     reason = assert_denied(auditor(command, tmp_path), f"a command of {len(command)} characters")
     assert_phrase(reason, BOUND_PHRASE, f"a command of {len(command)} characters")
-    assert reason == BOUND_MESSAGE, (
-        "the bound's denial must be decision 25's text verbatim.\n"
-        f"expected: {BOUND_MESSAGE!r}\nreason:   {reason!r}"
+    expected = bound_message(len(command.encode("utf-8")))
+    assert reason == expected, (
+        "the bound's denial must be its text verbatim.\n"
+        f"expected: {expected!r}\nreason:   {reason!r}"
     )
 
 
@@ -2215,9 +2263,9 @@ def test_the_coders_denial_of_a_long_command_carries_the_paragraph(tmp_path: Pat
     """Decision 25: the denial goes through `deny`, so in `stop-and-report` mode
     it ends with decision 11's paragraph after one space."""
     reason = assert_denied(coder(OVER_THE_BOUND, tmp_path), "a command of 16385 characters")
-    expected = f"{BOUND_MESSAGE} {FINAL_PARAGRAPH}"
+    expected = f"{bound_message(16385)} {FINAL_PARAGRAPH}"
     assert reason == expected, (
-        "the coder's denial must be decision 25's text and decision 11's paragraph.\n"
+        "the coder's denial must be the bound's text and decision 11's paragraph.\n"
         f"expected: {expected!r}\nreason:   {reason!r}"
     )
 
@@ -2739,32 +2787,33 @@ def test_find_selecting_paths_stays_allowed(tmp_path: Path) -> None:
     assert_allowed(auditor("find . -name x -type f", tmp_path), "find . -name x -type f")
 
 
-# --- the parenthesis scan is linear ---------------------------------------
+# --- the parenthesis scan at the command bound ---------------------------
 #
 # The scan used to be a character-by-character bash loop, which is quadratic:
 # on bash 3.2 a 16,384-character command with a quoted parenthesis took about
 # 7.7 s to check (11.9 s for multibyte text), and a deployment measured a
-# 100,000-character command at 108 s. A hook that runs past its timeout may let
-# the command through unchecked, so a slow check is a bypass. The scan now runs
-# in jq, and the same commands take about 0.25 s on bash 3.2.
-#
-# Every command here is exactly 16,384 characters, the longest that ADR-0018
-# decision 25 still allows, so the cases hold whichever way that bound is
-# settled up to that length. The budget is well under the old loop's time on
-# bash 3.2 and well over the jq scan's; on bash 5 both are expected to be
-# faster.
+# 100,000-character command at 108 s. The scan now runs in jq, which is linear,
+# and the 2048-byte bound caps what it can be given. So these cases sit exactly
+# at the bound -- the longest command the scan can now see -- and pin two
+# things there: that the scan judges the whole of a command that fills the
+# bound, a quoted span almost 2048 bytes long, a parenthesis in its very last
+# bytes and a quote left open at its end; and that the whole guard decides it
+# well inside the hook's time limit. The deployment's criterion for the bound
+# was every worst-case pattern under 6 s at 2048 characters on bash 3.2; the
+# budget here is 5 s. At this length the old loop was fast too, so these cases
+# no longer tell the jq scan from the loop by time; the bound is what keeps the
+# input small.
 
-LINEAR_SCAN_BUDGET_SECONDS = 5.0
-LINEAR_SCAN_LENGTH = 16384
+PAREN_AT_BOUND_BUDGET_SECONDS = 5.0
 
-LONG_PAREN_ALLOWED = [
-    ("quoted-ascii", "rg '(" + "a" * 16375 + ")' ."),
-    ("quoted-multibyte", "rg '(" + "\u00e4" * 16375 + ")' ."),
+PAREN_AT_BOUND_ALLOWED = [
+    ("quoted-ascii", "rg '(" + "a" * 2039 + ")' ."),
+    ("quoted-multibyte", "rg '(" + "\u00e4" * 1019 + "a)' ."),
 ]
 
-LONG_PAREN_REFUSED = [
-    ("unquoted-paren-at-the-end", "rg '" + "a" * 16374 + "' a(N)"),
-    ("unterminated-quote-after-a-paren", "rg '(x)' '" + "a" * 16373 + "("),
+PAREN_AT_BOUND_REFUSED = [
+    ("unquoted-paren-at-the-end", "rg '" + "a" * 2038 + "' a(N)"),
+    ("unterminated-quote-after-a-paren", "rg '(x)' '" + "a" * 2037 + "("),
 ]
 
 
@@ -2776,32 +2825,34 @@ def run_timed(command: str, tmp_path: Path) -> tuple[subprocess.CompletedProcess
 
 @pytest.mark.parametrize(
     "command",
-    [command for _, command in LONG_PAREN_ALLOWED],
-    ids=[case_id for case_id, _ in LONG_PAREN_ALLOWED],
+    [command for _, command in PAREN_AT_BOUND_ALLOWED],
+    ids=[case_id for case_id, _ in PAREN_AT_BOUND_ALLOWED],
 )
-def test_a_long_quoted_parenthesis_is_allowed_in_linear_time(tmp_path: Path, command: str) -> None:
-    assert len(command) == LINEAR_SCAN_LENGTH
+def test_a_quoted_parenthesis_in_a_command_at_the_bound_is_allowed_in_time(
+    tmp_path: Path, command: str
+) -> None:
+    assert len(command.encode("utf-8")) == BOUND_BYTES
     result, elapsed = run_timed(command, tmp_path)
-    assert_allowed(result, f"a {len(command)}-character command with a quoted parenthesis")
-    assert elapsed < LINEAR_SCAN_BUDGET_SECONDS, (
-        f"the parenthesis scan took {elapsed:.1f} s on a {len(command)}-character command; "
-        f"the budget is {LINEAR_SCAN_BUDGET_SECONDS} s"
+    assert_allowed(result, f"a {BOUND_BYTES}-byte command with a quoted parenthesis")
+    assert elapsed < PAREN_AT_BOUND_BUDGET_SECONDS, (
+        f"the guard took {elapsed:.1f} s on a {BOUND_BYTES}-byte command; "
+        f"the budget is {PAREN_AT_BOUND_BUDGET_SECONDS} s"
     )
 
 
 @pytest.mark.parametrize(
     "command",
-    [command for _, command in LONG_PAREN_REFUSED],
-    ids=[case_id for case_id, _ in LONG_PAREN_REFUSED],
+    [command for _, command in PAREN_AT_BOUND_REFUSED],
+    ids=[case_id for case_id, _ in PAREN_AT_BOUND_REFUSED],
 )
-def test_a_long_command_with_an_unquoted_parenthesis_is_refused_in_linear_time(
+def test_an_unquoted_parenthesis_in_a_command_at_the_bound_is_refused_in_time(
     tmp_path: Path, command: str
 ) -> None:
-    assert len(command) == LINEAR_SCAN_LENGTH
+    assert len(command.encode("utf-8")) == BOUND_BYTES
     result, elapsed = run_timed(command, tmp_path)
-    reason = assert_denied(result, f"a {len(command)}-character command")
-    assert_phrase(reason, "parenthesis", f"a {len(command)}-character command")
-    assert elapsed < LINEAR_SCAN_BUDGET_SECONDS, (
-        f"the parenthesis scan took {elapsed:.1f} s on a {len(command)}-character command; "
-        f"the budget is {LINEAR_SCAN_BUDGET_SECONDS} s"
+    reason = assert_denied(result, f"a {BOUND_BYTES}-byte command")
+    assert_phrase(reason, "parenthesis", f"a {BOUND_BYTES}-byte command")
+    assert elapsed < PAREN_AT_BOUND_BUDGET_SECONDS, (
+        f"the guard took {elapsed:.1f} s on a {BOUND_BYTES}-byte command; "
+        f"the budget is {PAREN_AT_BOUND_BUDGET_SECONDS} s"
     )

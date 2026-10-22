@@ -850,6 +850,44 @@ case "$nul_status" in
     ;;
 esac
 
+# --- Command length bound ------------------------------------------------
+# Before literal mode and every per-word rule, because several of the
+# checks below scale worse than linearly with the command: they use bash
+# pattern substitution and per-word loops over the command and its tokens,
+# and under bash 3.2 their cost grows much faster than the length. A hook
+# that runs past its timeout (60 s by default) may let the command through
+# unchecked, so a slow check is a bypass, and the one bound that holds for
+# every check, present and future, is a bound on the input.
+#
+# Measured on bash 3.2 by a deployment that runs this guard: 8,192
+# characters of quotes or backslashes took about 30 s to check, and 50,000
+# characters of `&& ls` took 228 s. At 2,048 characters, ten worst-case
+# ASCII and multibyte patterns (quotes, backslashes, `&&` chains, repeated
+# `git log -p`, Latin, CJK and emoji text) all checked in under 6 s. This
+# kit's own record is the same shape: a 16,384-character command took
+# 28.8 s alone on macOS bash 3.2 (VERIFICATION.md), half the default
+# timeout for a command of plain words, which leaves too thin a margin for
+# a worse one. No read-only inspection command needs to be long; the
+# longest an auditor sent on that deployment was about 200 characters.
+#
+# The limit is on UTF-8 BYTES of the RAW command, as jq reads it from the
+# payload, not on `${#command_str}`. `command_str` came through `$(...)`,
+# which drops trailing newlines, so the raw string is the longest form any
+# check sees; and multibyte text costs more per character in bash's UTF-8
+# handling, so a byte limit gives it proportionally fewer characters.
+#
+# This departs from upstream's ADR-0018 decision 25, which bounds the
+# command at 16,384 characters (see VERIFICATION.md). It fails closed: if
+# jq cannot produce a number, the command is refused.
+max_command_bytes=2048
+raw_command_bytes="$(printf '%s' "$input" | jq -r '(.tool_input.command // "") | utf8bytelength' 2>/dev/null)" || raw_command_bytes=""
+if ! [[ "$raw_command_bytes" =~ ^[0-9]+$ ]]; then
+  deny "bash guard: the command's length could not be measured, so the guard cannot confirm that it is short enough to vet within the hook's time limit. The command is refused."
+fi
+if (( raw_command_bytes > max_command_bytes )); then
+  deny "bash guard: the command is ${raw_command_bytes} bytes long, more than this guard's limit of ${max_command_bytes} bytes (UTF-8 bytes, not characters). Some of the checks this guard runs grow faster than the command's length, and a check that ran past the hook's time limit could let a command through unchecked, so a longer command is refused outright. Split the work into several shorter commands. The command is refused."
+fi
+
 [[ -n "$command_str" ]] || exit 0
 
 # --- Literal mode (ADR-0018 decision 3) ----------------------------------
@@ -1175,7 +1213,9 @@ done
 # to scan with the loop this replaces, and a deployment measured a
 # 100,000-character command at 108 s. A hook that runs past its timeout (60
 # s by default) may let the command through unchecked, so a slow check is a
-# bypass. jq's reduce over the code points is linear. The scan reads the
+# bypass. jq's reduce over the code points is linear. The command length
+# bound above now caps its input at 2,048 bytes as well, so the jq scan is
+# a second line rather than the only one. The scan reads the
 # same `command_str` every other check here reads, so it judges exactly
 # the string the loop judged. It fails closed: if jq errors, or prints
 # anything but `false`, the command is refused. (This rule is the kit's

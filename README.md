@@ -33,8 +33,9 @@ lands once instead of in four copies.
 Both hooks **fail closed**: Claude Code blocks a tool call only when a
 hook exits 2, so a guard that crashes on input it did not expect would
 otherwise allow it. They refuse a payload they cannot read, a path with a
-`.` or `..` component, a path outside the policy's root, a search pattern
-that climbs out of the searched directory, and a NUL byte anywhere. Tested
+`.` or `..` component, a path outside the policy's root, a guarded path
+outside printable ASCII, a search pattern that climbs out of the searched
+directory, a Bash command over 2,048 bytes, and a NUL byte anywhere. Tested
 by dispatch against the previous version of this kit, a `test-author`
 agent read implementation source twice — once through a coverage report,
 once through a `Grep` path containing `..` — and wrote a file into the
@@ -87,21 +88,25 @@ Two consequences worth knowing before you trust an install:
 
 ## The guards are tested here
 
-`tests/hooks/` runs both hooks as real subprocesses — 1,290 cases once
+`tests/hooks/` runs both hooks as real subprocesses — 1,306 cases once
 parametrised — feeding each a `PreToolUse` payload and asserting on the
 exit status and the refusal text. The "configured" tests run every policy
 in `tests/hooks/fixtures/settings.json`, a complete instantiation of the
 wiring the skills document, and the alternative `test-author` read
 allowlist in `tests/hooks/fixtures/settings-read-allowlist.json`, so a
-glob change that opens a hole fails CI rather than someone's project. It needs Python, pytest, bash and jq:
+glob change that opens a hole fails CI rather than someone's project. It
+needs Python, pytest, bash and jq:
 
 ```bash
 python -m pytest tests/hooks -q
 ```
 
-132 of those cases are **strict expected failures** on every platform,
+129 of those cases are **strict expected failures** on every platform,
 listed in `tests/hooks/pending_upstream.txt`. They encode gaps the
-upstream design has specified and tested but not yet implemented. Strict
+upstream design has specified and tested but not yet implemented. (Two
+upstream decisions this kit departs from on purpose — the command bound
+and non-ASCII paths — are tested as the kit decides them; see
+`VERIFICATION.md`.) Strict
 means that when one is fixed it fails the build until its line is removed
 — the list cannot quietly go stale. Three more fail only under bash 3.2;
 see below.
@@ -129,7 +134,8 @@ config options for `grep` and bfs's `-rm` for `find`; it does not rely on
 those functions' own filtering, which can change with any release. And the
 default macOS volume is case-insensitive, so `path-guard.sh` folds case when it
 matches `DENY_GLOBS` (`.GITHUB/x.yml` is `.github/x.yml`); `ALLOW_GLOBS` and
-`EXEMPT_GLOBS` stay exact. All of these were found on deployments; see
+`EXEMPT_GLOBS` stay exact. Because the volume folds Unicode case too, which
+no bash glob reproduces, a guarded path outside printable ASCII is refused. All of these were found on deployments; see
 `VERIFICATION.md`.
 
 ## Developing the skills

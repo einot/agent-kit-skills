@@ -159,8 +159,10 @@ alone. Parentheses are refused unless quoted, and so is `~[`, because your
 commands may run under zsh, where an unquoted parenthesised glob suffix
 such as `*(e:...:)` or a `=(...)` runs shell code. Quoted parentheses are
 fine (`jq -c 'del(.b)'`, `rg -n 'foo(bar)?'`); an unterminated quote is
-refused. `find` may be bfs and `grep` may be ugrep in your shell: bfs's
-`-rm` is refused like `-delete`, and ugrep's command-running, config and
+refused. A command longer than 2,048 bytes is refused outright, because
+some of the guard's checks slow down sharply on long input; split long
+work into shorter commands. `find` may be bfs and `grep` may be ugrep in
+your shell: bfs's `-rm` is refused like `-delete`, and ugrep's command-running, config and
 index options (`--filter`, `--pager`, `--view`, `--config`/`---`,
 `--save-config`, `--index`, `--format-open`, `-Q`/`--query`) are refused
 for `grep`. Plain searches are unaffected. Refusing those metacharacters
