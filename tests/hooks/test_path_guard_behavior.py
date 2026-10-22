@@ -149,6 +149,13 @@ GUARD = REPO_ROOT / "skills" / "agent-kit" / "hooks" / "path-guard.sh"
 # reference wiring the skills document, instantiated for an example
 # layout, so the "configured" tests pin that wiring to real behaviour.
 SETTINGS_PATH = Path(__file__).resolve().parent / "fixtures" / "settings.json"
+# The alternative test-author read policy agent-kit-test-author recommends: an
+# allowlist of what the agent may read, instead of a denylist of what it may
+# not. It is a separate file because both shapes are scoped to test-author, and
+# a project installs one or the other, never both.
+READ_ALLOWLIST_SETTINGS_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "settings-read-allowlist.json"
+)
 
 BASH = shutil.which("bash")
 JQ = shutil.which("jq")
@@ -507,11 +514,13 @@ def _split_command(command: str) -> tuple[dict[str, str], Path]:
     return env, path if path.is_absolute() else REPO_ROOT / path
 
 
-def configured_policy(agent_name: str, tools: frozenset[str]) -> tuple[dict[str, str], Path]:
+def configured_policy(
+    agent_name: str, tools: frozenset[str], settings_path: Path = SETTINGS_PATH
+) -> tuple[dict[str, str], Path]:
     """The live policy for one agent and tool set, read from settings.json."""
-    if not SETTINGS_PATH.is_file():
-        pytest.fail(f"{SETTINGS_PATH} does not exist; no policy is wired for {agent_name}")
-    settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    if not settings_path.is_file():
+        pytest.fail(f"{settings_path} does not exist; no policy is wired for {agent_name}")
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
     for entry in settings.get("hooks", {}).get("PreToolUse", []):
         matched = {part.strip() for part in entry.get("matcher", "").split("|")}
         if not tools <= matched:
@@ -521,7 +530,7 @@ def configured_policy(agent_name: str, tools: frozenset[str]) -> tuple[dict[str,
             if agent_name in env.get("SCOPE_AGENT_TYPES", "").split():
                 return env, script
     pytest.fail(
-        f"no PreToolUse policy in {SETTINGS_PATH} matches {sorted(tools)} and names "
+        f"no PreToolUse policy in {settings_path} matches {sorted(tools)} and names "
         f"'{agent_name}' in SCOPE_AGENT_TYPES; see test_agent_hook_wiring.py"
     )
 
@@ -727,6 +736,86 @@ def test_configured_test_author_read_policy_denies_an_unscoped_search() -> None:
     policy, script = configured_policy("test-author", frozenset({"Read", "Grep", "Glob"}))
     result = run_guard("Grep", policy=policy, agent_type="test-author", script=script)
     assert_denied(result, "test-author running an unscoped Grep")
+
+
+# The allowlist shape of the same read policy. A denylist admits every spelling
+# and every derived copy of the implementation it does not anticipate -- a
+# coverage report, git's objects, a tool cache, a build directory, another
+# agent's worktree -- and each derived-artifact bypass this kit has fixed was a
+# denylist miss. An allowlist refuses all of them without naming them. Allow
+# globs are matched exactly, so a case variant of an allowed tree is refused
+# too rather than admitted.
+READ_ALLOWLIST_CASES = [
+    ("Read", SPEC_FILE, True),
+    ("Read", SCHEMA_FILE, True),
+    ("Read", TOP_LEVEL_TEST_FILE, True),
+    ("Read", NESTED_TEST_FILE, True),
+    ("Read", TESTKIT_FILE, True),
+    # Each directory is listed bare as well as with `/*`, so a Grep of the
+    # directory itself works.
+    ("Grep", "docs", True),
+    ("Grep", "tests", True),
+    ("Grep", "services/ingest/tests", True),
+    ("Read", IMPLEMENTATION_FILE, False),
+    ("Read", SERVICE_FILE, False),
+    ("Read", TOOL_FILE, False),
+    ("Grep", "packages", False),
+    ("Grep", "services", False),
+    ("Grep", "packages/acme-core/src", False),
+    # Derived copies of the implementation, none of them named by the policy.
+    ("Read", "htmlcov/packages_acme-core_src_acme_core_window_py.html", False),
+    ("Read", ".git/objects/ab/cdef0123456789", False),
+    ("Read", ".mypy_cache/3.12/acme/core/window.data.json", False),
+    ("Read", "build/lib/acme/core/window.py", False),
+    ("Read", ".claude/worktrees/agent-1/packages/acme-core/src/acme/core/window.py", False),
+    ("Grep", ".claude/worktrees", False),
+    # Agent configuration inside an allowed tree stays denied.
+    ("Read", "docs/.claude/settings.json", False),
+    # Exact case: a variant of an allowed tree matches no allow glob.
+    ("Read", "TESTS/test_x.py", False),
+    ("Read", "Docs/spec/acme_spec_1.md", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "path", "allowed"),
+    READ_ALLOWLIST_CASES,
+    ids=[f"{tool}-{'allow' if ok else 'deny'}-{path}" for tool, path, ok in READ_ALLOWLIST_CASES],
+)
+def test_configured_test_author_read_allowlist(tool_name: str, path: str, allowed: bool) -> None:
+    """The allowlist read policy admits the spec, the schemas and the tests, and
+    refuses everything else, including copies of the implementation it never
+    names."""
+    policy, script = configured_policy(
+        "test-author", frozenset({"Read", "Grep", "Glob"}), READ_ALLOWLIST_SETTINGS_PATH
+    )
+    kwargs: dict[str, Any] = (
+        {"file_path": under_repo(path)} if tool_name == "Read" else {"search_path": path}
+    )
+    result = run_guard(
+        tool_name,
+        policy=policy,
+        agent_type="test-author",
+        script=script,
+        **kwargs,
+    )
+    if allowed:
+        assert_allowed(result, f"test-author reading {path} under the read allowlist")
+    else:
+        assert_denied(result, f"test-author reading {path} under the read allowlist")
+
+
+@pytest.mark.parametrize("search_path", [None, "."], ids=["unscoped", "project-root"])
+def test_configured_test_author_read_allowlist_denies_a_whole_project_search(
+    search_path: str | None,
+) -> None:
+    policy, script = configured_policy(
+        "test-author", frozenset({"Read", "Grep", "Glob"}), READ_ALLOWLIST_SETTINGS_PATH
+    )
+    result = run_guard(
+        "Grep", policy=policy, search_path=search_path, agent_type="test-author", script=script
+    )
+    assert_denied(result, f"test-author running a Grep with path {search_path!r}")
 
 
 def test_configured_policies_ignore_the_top_level_session() -> None:

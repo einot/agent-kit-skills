@@ -85,6 +85,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -2648,6 +2649,10 @@ GREP_REFUSALS = [
     "grep --ind -r a .",
     "grep ---=x a f",
     "grep ---",
+    # Claude Code's own grep function keeps --format-open away from ugrep, so
+    # the guard refuses it, and every abbreviation of it, as well.
+    "grep --format-open=x a f",
+    "grep --format-op a f",
 ]
 
 
@@ -2703,3 +2708,100 @@ def test_ruff_format_refuses_a_write_denied_file_in_any_case(tmp_path: Path, pat
 
 def test_ruff_format_still_formats_an_ordinary_file(tmp_path: Path) -> None:
     assert_allowed(coder("uv run --locked ruff format src/a.py", tmp_path), "ruff format src/a.py")
+
+
+# --- find: bfs's -rm ------------------------------------------------------
+#
+# Claude Code's shell setup can define `find` as a function that runs bfs,
+# and bfs accepts `-rm` as an alias for `-delete`. Found on a macOS
+# deployment: `find . -name x -rm` passed `check_find`, which listed only GNU
+# find's writing and executing actions.
+
+FIND_RM_REFUSALS = [
+    "find . -name x -rm",
+    "find . -rm",
+    "find src -type f -rm -print",
+]
+
+
+@pytest.mark.parametrize("command", FIND_RM_REFUSALS, ids=FIND_RM_REFUSALS)
+def test_find_refuses_bfs_rm(tmp_path: Path, command: str) -> None:
+    reason = assert_denied(auditor(command, tmp_path), command)
+    assert_phrase(reason, "'find -rm'", command)
+
+
+def test_find_rm_is_refused_under_the_coder_policy_too(tmp_path: Path) -> None:
+    reason = assert_denied(coder("find . -name x -rm", tmp_path), "find -rm under the coder policy")
+    assert_phrase(reason, "'find -rm'", "find -rm under the coder policy")
+
+
+def test_find_selecting_paths_stays_allowed(tmp_path: Path) -> None:
+    assert_allowed(auditor("find . -name x -type f", tmp_path), "find . -name x -type f")
+
+
+# --- the parenthesis scan is linear ---------------------------------------
+#
+# The scan used to be a character-by-character bash loop, which is quadratic:
+# on bash 3.2 a 16,384-character command with a quoted parenthesis took about
+# 7.7 s to check (11.9 s for multibyte text), and a deployment measured a
+# 100,000-character command at 108 s. A hook that runs past its timeout may let
+# the command through unchecked, so a slow check is a bypass. The scan now runs
+# in jq, and the same commands take about 0.25 s on bash 3.2.
+#
+# Every command here is exactly 16,384 characters, the longest that ADR-0018
+# decision 25 still allows, so the cases hold whichever way that bound is
+# settled up to that length. The budget is well under the old loop's time on
+# bash 3.2 and well over the jq scan's; on bash 5 both are expected to be
+# faster.
+
+LINEAR_SCAN_BUDGET_SECONDS = 5.0
+LINEAR_SCAN_LENGTH = 16384
+
+LONG_PAREN_ALLOWED = [
+    ("quoted-ascii", "rg '(" + "a" * 16375 + ")' ."),
+    ("quoted-multibyte", "rg '(" + "\u00e4" * 16375 + ")' ."),
+]
+
+LONG_PAREN_REFUSED = [
+    ("unquoted-paren-at-the-end", "rg '" + "a" * 16374 + "' a(N)"),
+    ("unterminated-quote-after-a-paren", "rg '(x)' '" + "a" * 16373 + "("),
+]
+
+
+def run_timed(command: str, tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], float]:
+    start = time.monotonic()
+    result = auditor(command, tmp_path)
+    return result, time.monotonic() - start
+
+
+@pytest.mark.parametrize(
+    "command",
+    [command for _, command in LONG_PAREN_ALLOWED],
+    ids=[case_id for case_id, _ in LONG_PAREN_ALLOWED],
+)
+def test_a_long_quoted_parenthesis_is_allowed_in_linear_time(tmp_path: Path, command: str) -> None:
+    assert len(command) == LINEAR_SCAN_LENGTH
+    result, elapsed = run_timed(command, tmp_path)
+    assert_allowed(result, f"a {len(command)}-character command with a quoted parenthesis")
+    assert elapsed < LINEAR_SCAN_BUDGET_SECONDS, (
+        f"the parenthesis scan took {elapsed:.1f} s on a {len(command)}-character command; "
+        f"the budget is {LINEAR_SCAN_BUDGET_SECONDS} s"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [command for _, command in LONG_PAREN_REFUSED],
+    ids=[case_id for case_id, _ in LONG_PAREN_REFUSED],
+)
+def test_a_long_command_with_an_unquoted_parenthesis_is_refused_in_linear_time(
+    tmp_path: Path, command: str
+) -> None:
+    assert len(command) == LINEAR_SCAN_LENGTH
+    result, elapsed = run_timed(command, tmp_path)
+    reason = assert_denied(result, f"a {len(command)}-character command")
+    assert_phrase(reason, "parenthesis", f"a {len(command)}-character command")
+    assert elapsed < LINEAR_SCAN_BUDGET_SECONDS, (
+        f"the parenthesis scan took {elapsed:.1f} s on a {len(command)}-character command; "
+        f"the budget is {LINEAR_SCAN_BUDGET_SECONDS} s"
+    )

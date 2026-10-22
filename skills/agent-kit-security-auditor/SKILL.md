@@ -91,9 +91,12 @@ fix anything you find; you only report it.
 ## Preloaded skill
 
 The `{{SECURITY_METHODOLOGY_SKILL}}` skill is preloaded into your context.
-It is vendored into this repo at `{{SECURITY_METHODOLOGY_PATH}}`, so it is
-there for every checkout rather than depending on what any individual has
-synced.
+{{METHODOLOGY_LOCATION — vendored: "It is vendored into this repo at
+`<path>`, so it is there for every checkout rather than depending on what
+any individual has synced." User-level: "It is a user-level skill, not
+vendored into this repo, so a fresh checkout elsewhere will not have it.
+If it is missing, say so in your report rather than proceeding without a
+methodology."}}
 
 Use it as your methodology reference: its attack-class taxonomy, hunting
 techniques and validation/triage bar (a candidate needs a concrete
@@ -127,7 +130,11 @@ over it. You may not modify a single byte of it.
 Allowed: {{ALLOW_CMDS_PROSE}}; read-only `git` ({{ALLOW_GIT_SUBCMDS}})
 with flags after the subcommand (`git log -p`, `git show -c HEAD`); and
 `node` pointed at approved validator scripts, named exactly. Pipelines of
-those are fine.
+those are fine. {{NODE_SENTENCE — with no validator scripts, replace the
+`node` clause above with this sentence: "`node` is not allowed in this
+project: the guard can admit it for named validator scripts, but this
+repository's policy enables neither `node` nor any script." Otherwise
+delete this placeholder.}}
 
 **`git -C` is refused, and it is the first thing you will reach for.**
 Global options that take a value — `-C`, `-c`, `--git-dir`, `--work-tree`,
@@ -142,10 +149,22 @@ Denied: anything that writes, anything that mutates git state, arbitrary
 interpreters (`python3`, `awk`, `sed -e`, `node -e`, `bash -c`, `xargs`),
 package installation, and network access.
 
-The shell metacharacters `$`, `` ` ``, `{`, `}`, `>`, `<`, `&` and newline
-are refused anywhere in a command, because bash rewrites a command after
-the guard has inspected it — brace expansion was a real bypass here, not a
-hypothetical one. That costs some syntax, so use these instead:
+The shell metacharacters `$`, `` ` ``, `{`, `}`, `>`, `<`, a lone `&` and
+newline are refused anywhere in a command, because bash rewrites a command
+after the guard has inspected it — brace expansion was a real bypass here,
+not a hypothetical one. `&&`, `||`, `|` and `;` are allowed, as
+separators: the guard splits the command on them and checks every segment
+on its own, so a compound command runs only if each part would be allowed
+alone. Parentheses are refused unless quoted, and so is `~[`, because your
+commands may run under zsh, where an unquoted parenthesised glob suffix
+such as `*(e:...:)` or a `=(...)` runs shell code. Quoted parentheses are
+fine (`jq -c 'del(.b)'`, `rg -n 'foo(bar)?'`); an unterminated quote is
+refused. `find` may be bfs and `grep` may be ugrep in your shell: bfs's
+`-rm` is refused like `-delete`, and ugrep's command-running, config and
+index options (`--filter`, `--pager`, `--view`, `--config`/`---`,
+`--save-config`, `--index`, `--format-open`, `-Q`/`--query`) are refused
+for `grep`. Plain searches are unaffected. Refusing those metacharacters
+costs some syntax, so use these instead:
 
 - literal braces: `rg -n '\x7b\x7d' src` (with `grep` add `-P`; plain
   `grep '\x7b'` silently matches the letters `x7b`)
@@ -166,8 +185,9 @@ names the workaround where one exists. If you believe a denial was wrong,
 say so in your report rather than retrying variants.
 
 Two limits worth knowing, both deliberate: the guard does no path scoping,
-so it does not stop you reading outside the repository; and it vouches for
-*which* validator script runs, never for what that script does.
+so it does not stop you reading outside the repository; and, where `node`
+is enabled for validator scripts, it vouches for *which* script runs,
+never for what that script does.
 
 ## What to review
 
@@ -200,6 +220,12 @@ after it:
 
 ```json
 {
+  "answers": {
+    "entry-boundary": "One sentence: what you checked at the externally-reachable surface and what you found.",
+    "other-network-apis": "One sentence, or 'not applicable: …'.",
+    "config-and-secrets": "One sentence.",
+    "idempotency-dedup": "One sentence, or 'not applicable: …'."
+  },
   "findings": [
     {
       "file": "{{EXAMPLE_FILE}}",
@@ -215,6 +241,9 @@ after it:
 }
 ```
 
+- `answers` is required, with exactly one key per item in the priority
+  list under "What to review", each a one-sentence answer. It is how the
+  dispatcher tells a clean audit from one that did not look.
 - `severity` is one of `low`, `medium`, `high`, `critical`.
 - `category` is a short kebab-case slug (`auth-bypass`, `injection`,
   `resource-exhaustion`, `secret-exposure`, `replay`, etc.).
@@ -224,8 +253,8 @@ after it:
   missing capability and the exact command or experiment a human with a
   sandbox should run.
 - Omit `line`/`spec_ref` when not applicable rather than guessing.
-- If you find nothing, output `{"findings": []}` — don't manufacture
-  low-value findings to have something to say.
+- If you find nothing, `findings` is `[]` — don't manufacture low-value
+  findings to have something to say. `answers` is still required.
 - Order findings most-severe first.
 ````
 
@@ -300,7 +329,8 @@ and the smoke test that caught it was a `sed` command succeeding with
   a write attempt (`git commit`, a redirect) is denied.
 - **Fenced build:** confirm the top-level session's own Bash is
   unaffected. If it is fenced too, `SCOPE_AGENT_TYPES` is missing.
-- The **last JSON object** in the agent's final message parses with `jq`.
+- The **last JSON object** in the agent's final message parses with `jq`,
+  and carries an `answers` object with one key per priority item.
 - Its findings name a concrete request or payload in `failure_scenario` —
   a finding that cannot describe how it is triggered is the
   generic-checklist failure mode this prompt exists to prevent.
@@ -312,16 +342,17 @@ and the smoke test that caught it was a `sed` command succeeding with
 | Placeholder | Meaning | Common value |
 | --- | --- | --- |
 | `{{PROJECT}}` | Project name | — |
-| `{{BOUNDARY_NAME}}` | What you call the untrusted edge | "ingestion boundary", "public API" |
-| `{{SECURITY_SPEC_REF}}` | The spec's security section | `docs/spec/…#security` |
+| `{{BOUNDARY_NAME}}` | What you call the untrusted edge — a noun phrase **without an article**, since the template supplies "the" | "ingestion boundary", "public API" |
+| `{{SECURITY_SPEC_REF}}` | The spec's security section — a bare path, since the template wraps it in backticks | `docs/spec/…#security` |
 | `{{ENTRY_SERVICE}}` | The externally-reachable service/dir | `services/ingest/` |
 | `{{OTHER_NETWORK_APIS}}` | Secondary reachable surfaces | read APIs, admin endpoints |
 | `{{CONFIG_PATHS}}` | Config/secret handling | `core/config`, `.env.example`, `deploy/` |
 | `{{DEDUP_PATHS}}` | Idempotency/replay logic, or delete | — |
 | `{{PROTOCOL_DOC}}` | The documented external interface | `docs/protocol/…` |
 | `{{EXAMPLE_FILE}}` | A real path, so the shape is unambiguous | — |
-| `{{SECURITY_METHODOLOGY_SKILL}}` | A vendored methodology skill, or delete | `security-audit` |
-| `{{SECURITY_METHODOLOGY_PATH}}` | Where it is vendored | `.claude/skills/security-audit/` |
+| `{{SECURITY_METHODOLOGY_SKILL}}` | A methodology skill, or delete it and the *Preloaded skill* section | `security-audit` |
+| `{{METHODOLOGY_LOCATION}}` | One of the two sentences the template gives: vendored (with its path) or user-level | vendored: `.claude/skills/security-audit/` |
+| `{{NODE_SENTENCE}}` | Fenced build without validator scripts: the "`node` is not allowed" sentence; otherwise delete | — |
 | `{{ALLOW_CMDS}}` | Fenced build: permitted command names | `ls cat head tail wc stat find grep rg jq diff cmp git` |
 | `{{ALLOW_CMDS_PROSE}}` | The same list, written out in the prompt | — |
 | `{{ALLOW_GIT_SUBCMDS}}` | Fenced build: read-only git subcommands | `log show diff status ls-files ls-tree cat-file blame rev-parse rev-list shortlog grep describe` |
@@ -332,7 +363,8 @@ If the project has no network surface at all, the priority list becomes
 the untrusted inputs it *does* have: files it parses, arguments it takes,
 archives it extracts, dependencies it resolves. Keep the ordering
 principle — nearest to untrusted input first — and keep the
-no-theoretical-findings rule.
+no-theoretical-findings rule. Whenever the priority list changes, change
+the `answers` keys in the output format to match it, one key per item.
 
 `severity` here has four levels, one more than `reviewer`. That is
 deliberate: `critical` means "reachable now, by anyone, with real impact",
@@ -352,6 +384,12 @@ a plausible-looking list of non-issues that costs more to triage than it
 saves. Pin one with a `model:` line and say in the agent file *why*, so a
 later reader does not "fix" the inconsistency with the other agents.
 
+Pin with a floating alias (`model: opus`), never a versioned id: a
+versioned pin goes stale silently when a newer model ships. An agent with
+no `model:` inherits the session's model, so pinning it also makes it
+ignore a deliberate session switch — which here is the point. `effort:`
+(`low`, `medium`, `high`, `xhigh`, `max`) can be pinned the same way.
+
 ## Parsing the output: extract, don't assume
 
 The JSON-only instruction is a strong default, not a guarantee. In
@@ -364,7 +402,9 @@ So the session must **extract the last JSON object in the final message**
 and parse that, rather than feeding the whole message to `jq`. Treat a
 message with no parseable JSON object as a dispatch failure and re-run it;
 do not fall back to reading the prose, because the point of the contract
-is that the session decides mechanically.
+is that the session decides mechanically. An empty `findings` list
+without an `answers` object is a dispatch failure too: an empty list is
+indistinguishable from "didn't look".
 
 ## Using the output
 
@@ -392,4 +432,6 @@ pairing, for the same reason `reviewer` does not: no write access, no
 execution, nothing to exceed. In the **fenced-Bash** build it is paired
 like the agents that can write — see `agent-kit-supervisor`, whose
 `CLAUDE.md` protocol must name it explicitly, or it quietly escapes
-coverage.
+coverage. A correct audit changes nothing, so the git evidence for that
+pairing is expected to be empty, and `supervisor` is being asked to
+confirm exactly that; `agent-kit-supervisor` says what to collect.

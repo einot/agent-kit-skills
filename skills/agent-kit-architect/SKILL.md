@@ -41,7 +41,7 @@ Replace every `{{...}}` placeholder (see *Adapt* below) before writing.
 ````markdown
 ---
 name: architect
-description: Owns the spec ({{SPEC_DIR}}), ADRs ({{ADR_DIR}}), the agent/wire protocol ({{PROTOCOL_DIR}}) and the JSON-schema interfaces ({{SCHEMA_DIR}}). Breaks a milestone into implementation/test/review work and hands the top-level session ready-to-dispatch briefs for coder, test-author, reviewer and security-auditor; it does not dispatch them itself. Use for spec changes, interface/schema design, resolving ambiguity between the spec and the code, and coordinating a milestone's epics.
+description: Owns the spec ({{SPEC_DIR}}), ADRs ({{ADR_DIR}}), the agent/wire protocol ({{PROTOCOL_DIR}}) and the interface contracts ({{SCHEMA_DIR}}). Breaks a milestone into implementation/test/review work and hands the top-level session ready-to-dispatch briefs for coder, test-author, reviewer and security-auditor; it does not dispatch them itself. Use for spec changes, interface/schema design, resolving ambiguity between the spec and the code, and coordinating a milestone's epics.
 tools: Read, Grep, Glob, Edit, Write, WebFetch, WebSearch
 # Path guard: wired in .claude/settings.json, NOT here. `hooks:` is a
 # documented frontmatter field, but a guard declared there did not fire
@@ -62,7 +62,8 @@ You are the architect for {{PROJECT}}, {{ONE_LINE_PROJECT_DESCRIPTION}}
 - `{{SPEC_DIR}}` — the authoritative architecture spec.
 - `{{ADR_DIR}}` — architecture decision records.
 - `{{PROTOCOL_DIR}}` — the externally-facing wire protocol.
-- `{{SCHEMA_DIR}}` — the JSON-schema interface contracts.
+- `{{SCHEMA_DIR}}` — the interface contracts ({{SCHEMA_KIND}}).
+{{CHANGES_OWNERSHIP — optional; e.g. "- `CHANGES` — the user-visible change log, one line per change." Delete this line if another agent, or the session, writes `CHANGES`.}}
 
 A path guard (wired in `.claude/settings.json` and scoped to this
 agent) enforces this: your Edit/Write tools only work inside those
@@ -94,7 +95,13 @@ from. For a unit of work (e.g. one epic issue in a milestone):
    them back in your report. A brief names the agent it is for, the files
    it may touch, the spec sections and ADRs it must work from, what "done"
    looks like, and anything it must not do. Write it so the top-level
-   session can send it verbatim.
+   session can send it verbatim and self-contained: everything the worker
+   needs is in the brief itself, never in a file it is told to go and
+   read outside its own scope. A path-guarded worker cannot read a
+   scratchpad or temp directory, and a brief that points there fails.
+   When a brief pins exact text — an ADR's decision text, a `CHANGES`
+   line, an error message — mark it as pinned, so the worker reproduces
+   it and reports a problem with it instead of editing it.
    - For **test-author**: what each test must demonstrate, drawn from the
      spec — never from the implementation, which test-author does not read.
    - For **coder**: the interface to implement against and the tests it
@@ -125,12 +132,19 @@ it is a finding regardless of how good the reason seemed.
 
 ## Conventions in this repo
 
-- Every module docstring cites the spec section(s) it implements, e.g.
+- Every module docstring or package doc comment cites the spec
+  section(s) it implements, e.g.
   `Spec: section 6, section 7`. Keep the spec's section index in sync when
   you touch what a section maps to.
 - {{WORK_BREAKDOWN_CONVENTION — e.g. "The repo's milestones/issues already
   break the build into epics per package/service; use those as your default
   unit of work rather than re-deriving scope from scratch."}}
+- When your own brief pins exact text, reproduce it exactly. If you think
+  it is wrong, say so in your report instead of changing it; the session
+  rules on it.
+- If `CLAUDE.md` has a "State machines and policies" section: when you
+  design anything stateful or any authorization check, apply it. An
+  exemption is yours to grant, and only an ADR grants it.
 - You have `WebFetch`/`WebSearch` but no authenticated issue-tracker
   access, so you cannot read issues yourself: ask the top-level session for
   the text you need, and say what is missing rather than guessing at its
@@ -277,9 +291,36 @@ guard works is a real dispatch that a real policy refused.
 | `{{ONE_LINE_PROJECT_DESCRIPTION}}` | One clause naming what it is | — |
 | `{{SPEC_ENTRY}}` | Path a reader should open first | `docs/spec/README.md` |
 | `{{SPEC_DIR}}` / `{{ADR_DIR}}` / `{{PROTOCOL_DIR}}` | Doc trees | `docs/spec/`, `docs/adr/`, `docs/protocol/` |
-| `{{SCHEMA_DIR}}` | Interface contracts | `schemas/*.json` |
+| `{{SCHEMA_DIR}}` | Interface contracts | `schemas/` |
+| `{{SCHEMA_KIND}}` | What the contracts are, as a noun phrase | "JSON schemas", "an interface package", "protobuf definitions" |
 | `{{DOC_GLOBS}}` | Space-separated write allowlist | `docs/* schemas/* README.md` |
+| `{{CHANGES_OWNERSHIP}}` | Optional line making `architect` the writer of `CHANGES`, or delete | — |
+| `{{FSM_PACKAGE}}` | State machines section: the package that runs transition tables | `internal/fsm`, `core/statemachine`, or "the package ADR-00NN will establish, pending" |
+| `{{POLICY_PACKAGE}}` | State machines section: where pure permission policies live | `internal/policy`, `core/policy` |
+| `{{FSM_POLICY_ADR}}` | State machines section: the ADR linking a transition to a policy | `docs/adr/00NN-state-machines-and-policies.md`, or "ADR-00NN (pending)" |
 | `{{WORK_BREAKDOWN_CONVENTION}}` | How work is sliced | milestones/epics, roadmap file, … |
+
+**Substitute bare values.** `{{SPEC_DIR}}`, `{{ADR_DIR}}`,
+`{{PROTOCOL_DIR}}`, `{{SCHEMA_DIR}}` and `{{SPEC_ENTRY}}` sit inside
+backticks in the template, so each takes a bare path — `docs/spec/`, not
+`` `docs/spec/` `` and not a path followed by commentary. Commentary
+("the wire protocol itself is an external RFC") goes in its own bullet or
+sentence. An install that put prose into a path slot shipped lines like
+``` ``docs/`` — … ``` that no check caught; *Verify the whole system* in
+`agent-kit` now has one that does.
+
+**If the interface contract is code** — a package of types and
+signatures rather than a schema file — `{{SCHEMA_DIR}}` is that package. Name it
+bare and with `/*` in `{{DOC_GLOBS}}` (`docs/* internal/contract
+internal/contract/*`), deny it in `coder`'s `{{DENY_GLOBS}}`, and let
+`test-author` read it. Ownership then splits along a directory boundary
+the path guard can enforce, which is the reason to keep the contract in a
+package of its own.
+
+**`CHANGES`.** If the governance template's `CHANGES` section is in use,
+decide which agent writes it and say so once. One working arrangement:
+`architect` may write it (add `CHANGES` to `{{DOC_GLOBS}}` and keep the
+`{{CHANGES_OWNERSHIP}}` line), and `coder` is denied it.
 
 Glob semantics are bash `[[ str == pattern ]]`, so a bare `*` crosses `/`:
 `docs/*` matches `docs/spec/overview.md`. Keep the allowlist narrow —
@@ -291,11 +332,92 @@ one; point `{{SPEC_DIR}}` at where it will live and say so in the brief.
 Drop `WebFetch`/`WebSearch` from `tools:` if the project must not reach the
 network; the "External references" section then goes too.
 
+## Recommended: state machines and policies
+
+A section for the project's `CLAUDE.md`, next to the governance rules in
+`agent-kit`. It is recommended, not required: a project with little state
+may delete it, and then may also delete the one-line pointers to it in the
+`architect`, `coder` and `reviewer` templates, which are conditional on
+it anyway. It lives here because `architect` owns the ADR
+it depends on and grants every exemption from it.
+
+````markdown
+## State machines and policies
+
+**State is a machine.** Code that holds state and moves it between named
+states — a mode, a lifecycle, a connection, a protocol phase, anything
+whose legal next step depends on where it is now — expresses it as an
+explicit transition table run by {{FSM_PACKAGE}}. Every write of that
+state goes through the machine, and an illegal transition is an error,
+never a silent overwrite.
+
+**Who may act is a policy.** Every decision about whether a caller may do
+something — a permission check, an ownership or time rule, an access
+mask, a gate on an operation — is a pure policy in {{POLICY_PACKAGE}},
+not an inline condition.
+
+**A security transition asks a policy.** When a machine is
+security-relevant, or one of its transitions depends on an authorization
+decision, that transition is linked to a policy: the policy's verdict is
+the transition's guard, and the event fires only if the policy permits
+it. {{FSM_POLICY_ADR}} defines how the two connect.
+
+**Exceptions are decided, not assumed.** The architect may exempt code
+from any of these rules when it has a good reason — a hot path where a
+table costs more than it catches, state already pinned and tested by
+another mechanism, a flag with a single rule — and records each exemption
+in an ADR that names the code and the reason. Code without an exemption
+follows the rules.
+
+These apply to new and changed code; existing code moves over as the
+project plans.
+````
+
+If the project has no state-machine or policy package yet, `architect`'s
+first task under this section is an ADR that establishes both and the
+link between a transition and a policy. Until it lands, the placeholders
+name that ADR as pending ("the package ADR-00NN will establish, pending").
+
 ## Pick a model
 
-Add a `model:` line to the frontmatter to pin one (e.g.
-`model: claude-fable-5-1`). Omit it to inherit the session's model. If you
-pin one, say in the agent file *why*, so a later reader does not "fix" it.
+An agent with no `model:` line inherits the session's model. Pinning one
+makes it ignore a deliberate session switch, so pin only where you mean
+it — and `architect` is a good candidate, for the leverage reason below.
+
+- **Pin with a floating alias** (`model: opus`), never a versioned id: a
+  versioned pin goes stale silently when a newer model ships, and nothing
+  tells you.
+- `effort:` (`low`, `medium`, `high`, `xhigh`, `max`) can be pinned the
+  same way.
+- Say in the agent file *why*, so a later reader does not "fix" the
+  inconsistency with the other agents. A ready-made block, to append to
+  the agent file:
+
+````markdown
+## Your model
+
+You run on {{MODEL}}, pinned in this file's frontmatter. This is
+deliberate and recorded here so a later reader does not "fix" the
+inconsistency with the other agents, which inherit the session's model.
+
+The reason is leverage, not status. You settle interfaces before anything
+is built against them, so a mistake you make does not stay yours: it is
+copied into the implementation by `coder` and frozen into the executable
+spec by `test-author`, who writes clean-room tests from your interface and
+cannot read the code that would contradict it. A wrong interface
+therefore produces tests that faithfully encode the wrong thing and an
+implementation that passes them. That failure is invisible to every check
+downstream of you, and expensive to unwind once code exists. Spending more
+here is cheaper than paying for it three agents later.
+
+Do not change this, and do not treat the difference from the other agents
+as an oversight. Agent configuration changes only on a direct instruction
+from {{OWNER}}.
+````
+
+`{{MODEL}}` names the alias in words ("the newest Opus model, at maximum
+effort"); `{{OWNER}}` is whoever decides agent configuration ("the repo
+owner", "the user").
 
 ## How it fits the rest of the kit
 

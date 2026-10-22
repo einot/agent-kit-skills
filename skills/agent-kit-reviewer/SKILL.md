@@ -50,7 +50,7 @@ other agents. You cannot fix anything you find; you only report it.
 
 Focus on the diff or module(s) you were asked to look at. For each:
 
-1. Does it match the spec section(s) its docstring cites?
+1. Does it match the spec section(s) its docstring or doc comment cites?
 2. Does it satisfy the interface defined in the relevant schema or
    protocol doc, where applicable?
 3. Correctness: logic errors, edge cases, off-by-ones, races, unhandled
@@ -60,6 +60,11 @@ Focus on the diff or module(s) you were asked to look at. For each:
    {{SHARED_PACKAGES}}.
 5. Test coverage: does the accompanying test (if any) actually exercise
    the behavior the spec requires, or just the happy path?
+6. State and policy, if `CLAUDE.md` has a "State machines and policies"
+   section: new or changed stateful code uses a machine, permission
+   decisions use a policy, and security-relevant transitions are guarded
+   by a policy's verdict, unless an ADR exempts it. An unexempted inline
+   state field or permission check is a finding.
 
 Do not comment on formatting/lint-fixable style — assume {{LINTER}}
 handles that.
@@ -71,6 +76,14 @@ after it:
 
 ```json
 {
+  "answers": {
+    "spec-match": "One sentence: does it match the cited spec sections?",
+    "interface": "One sentence: does it satisfy the schema or protocol doc?",
+    "correctness": "One sentence: what you checked and what you found.",
+    "reuse": "One sentence: any duplication of shared code?",
+    "test-coverage": "One sentence: do the tests exercise what the spec requires?",
+    "state-and-policy": "One sentence, or 'not applicable: CLAUDE.md has no State machines and policies section'."
+  },
   "findings": [
     {
       "file": "{{EXAMPLE_FILE}}",
@@ -85,19 +98,26 @@ after it:
 }
 ```
 
+- `answers` is required, with exactly one key per item under "What to
+  review" (`spec-match`, `interface`, `correctness`, `reuse`,
+  `test-coverage`, `state-and-policy`), each a one-sentence answer —
+  "not applicable: no schema covers this module" is an answer. It is how the dispatcher tells
+  a clean review from one that did not look.
+
 - `severity` is one of `low`, `medium`, `high`.
 - `category` is a short kebab-case slug (`correctness`, `spec-drift`,
   `simplification`, `test-coverage`, etc.).
 - Omit `line`/`spec_ref` when not applicable rather than guessing.
-- If you find nothing, output `{"findings": []}` — don't manufacture
-  low-value findings to have something to say.
+- If you find nothing, `findings` is `[]` — don't manufacture low-value
+  findings to have something to say. `answers` is still required.
 - Order findings most-severe first.
 ````
 
 ### Verify
 
 - The **last JSON object** in the agent's final message parses with `jq`.
-- A clean change yields `{"findings": []}` rather than invented nits.
+- A clean change yields an empty `findings` list rather than invented
+  nits, **and** an `answers` object with one sentence per review item.
 - Confirm it has no Bash: asked to run the test suite, it must say it
   cannot, not describe what the suite "would" report.
 
@@ -111,11 +131,21 @@ after it:
 | `{{LINTER}}` | The formatter/linter CI runs | `ruff`, `eslint`, `gofmt` |
 | `{{EXAMPLE_FILE}}` | A real path, so the shape is unambiguous | — |
 
+Item 6 and its `state-and-policy` key belong to the recommended *State
+machines and policies* section (see `agent-kit-architect`). They are
+conditional as written, so they can stay; a project that will never adopt
+the section may delete both together.
+
 Keep the severity vocabulary (`low`/`medium`/`high`) and the JSON-only
 rule verbatim — the session's handling of findings depends on both.
 Extend `category` freely; it is a free-form slug by design.
 
-Add a `model:` line to pin a model. Omit it to inherit the session's.
+An agent with no `model:` line inherits the session's model, which is
+usually what you want here. If you do pin one, pin a floating alias
+(`model: opus`, `model: sonnet`), never a versioned id: a versioned pin
+goes stale silently when a newer model ships. `effort:` can be pinned the
+same way. If you rename or add review items, keep the `answers` keys in
+step with them.
 
 ## Parsing the output: extract, don't assume
 
@@ -136,7 +166,10 @@ is that the session decides mechanically.
 The dispatching session, not the reviewer, decides what happens next:
 
 1. Parse the JSON; if it does not parse, that is itself a problem — re-ask
-   rather than guessing at the prose.
+   rather than guessing at the prose. An empty `findings` list **without**
+   an `answers` object is a dispatch failure too: an empty list is
+   indistinguishable from "didn't look", so re-run the dispatch rather than
+   recording a clean review.
 2. Every finding becomes a `coder` brief, or an `architect` brief when it
    is the *interface* that is wrong. Fixes arising from review findings
    are dispatched like any other work — never hand-patched by the session.

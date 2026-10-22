@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' ALLOW_GLOBS='docs docs/* schemas schemas/* tests tests/* packages/*/tests packages/*/tests/* services/*/tests services/*/tests/* tools/*/tests tools/*/tests/* packages/acme-testkit packages/acme-testkit/*' DENY_GLOBS='.claude .claude/* */.claude */.claude/* .git .git/* */.git */.git/*' ${CLAUDE_PROJECT_DIR}/skills/agent-kit/hooks/path-guard.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

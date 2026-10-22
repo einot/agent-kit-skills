@@ -26,22 +26,83 @@ cannot change. Three constraints make that real rather than aspirational:
    and every spec/schema path. A failing test is a finding, not something
    to edit away; an awkward interface is a flag-back to `architect`, not a
    schema edit.
-3. **An explicit rule against routing around the guard with Bash.** The
-   guard cannot inspect shell commands and this agent keeps Bash so it can
-   run tests — so the boundary is stated in the prompt as well as enforced
-   where it can be.
+3. **No second way to write.** The path guard sees only the Edit and
+   Write tools. In the recommended build `coder` has no Bash, so those are
+   its only way to change a file and the guard is a real boundary. In a
+   build that keeps Bash, the boundary is stated in the prompt as well as
+   enforced where it can be, and `supervisor` covers the gap — see *Three
+   builds* below.
+
+## Three builds of this agent
+
+Decide this before installing, because it changes the tools, the prompt,
+the wiring and what the session does after every dispatch.
+
+| | **No Bash** (recommended) | **Unfenced Bash** | **Fenced Bash (tripwire)** |
+| --- | --- | --- | --- |
+| `tools:` | `Read, Grep, Glob, Edit, Write` | `+ Bash` | `+ Bash` |
+| Bash hook | none | none | `bash-guard.sh`, literal mode |
+| Toolchain | any | any | Python on uv with a `Makefile` only |
+| Who runs the merge bar | the session, in `coder`'s worktree | `coder`, then the session | `coder`, then the session |
+| Who commits | the session | `coder` or the session | `coder`, through `.commit-msg` |
+| The path guard is | a boundary | a default `supervisor` backs up | a default, with circumvention leaving evidence |
+
+**Start with no Bash.** A guard on Edit and Write is only a boundary if
+nothing else can write, and a shell — or a test binary run from one, which
+executes code `coder` wrote — can write anywhere. This is not theoretical:
+in a deployment, a probe dispatch showed a `coder` with Bash applying an
+edit through a Python script, which no path guard sees. A fence on the
+shell would not have closed that, because the shell's job is running the
+tests, and the tests run code the agent wrote.
+
+**The cost is that `coder` works blind.** It cannot build, format, run the
+tests or commit. The session runs the merge bar in `coder`'s worktree
+after every dispatch, commits the work there itself, and resumes the same
+`coder` with the failure output when something is red. Those gate runs are
+the only test runs `coder`'s work gets, so they are the authority, not a
+double-check. A formatter becomes something the agent applies by hand,
+which is why the prompt asks for code that is already formatted.
+
+Keep Bash only where the round trip through the session is genuinely too
+slow, and then prefer the tripwire if your toolchain fits it.
+
+**With the no-Bash build, add this to the *Orchestration role* section of
+the `CLAUDE.md` governance rules** (see `agent-kit`):
+
+````markdown
+**`coder` has no Bash, on purpose.** The path guard only sees Edit and
+Write, so it is a boundary only for an agent with no other way to write.
+The cost is that `coder` works blind: it cannot build, format, test or
+commit. The session therefore runs the merge bar in `coder`'s worktree
+after every dispatch, commits `coder`'s changes there itself, and resumes
+the same `coder` with any failure output rather than starting a fresh
+one. Those gate runs are the only test runs `coder`'s work gets, so they
+are the authority, not a double-check.
+````
+
+**Optional, if the project restricts dependencies**, a `CLAUDE.md`
+section to go with the `{{DEPENDENCY_RULE}}` bullet in the agent file:
+
+````markdown
+## Dependencies
+
+Adding a dependency is {{OWNER}}'s decision. An agent that wants one
+reports the need rather than taking it.
+````
 
 ## Install
 
 ### 1. Write `.claude/agents/coder.md`
 
 Replace every `{{...}}` placeholder (see *Adapt* below) before writing.
+The template is the **no-Bash** build. For a build that keeps Bash, apply
+the three substitutions listed right after it.
 
 ````markdown
 ---
 name: coder
-description: Implements {{PROJECT}} services, packages and tools ({{CODE_DIRS}}) against the spec, ADRs and JSON-schema interfaces the architect owns, and against tests test-author has written. Runs in an isolated git worktree. Cannot edit tests or the spec/interfaces. Use for filling in a stub module, fixing a bug, or making a failing test pass.
-tools: Read, Grep, Glob, Edit, Write, Bash
+description: Implements {{PROJECT}} services, packages and tools ({{CODE_DIRS}}) against the spec, ADRs and interface contracts the architect owns, and against tests test-author has written. Runs in an isolated git worktree. Cannot edit tests or the spec/interfaces. Use for filling in a stub module, fixing a bug, or making a failing test pass.
+tools: Read, Grep, Glob, Edit, Write
 isolation: worktree
 # Path guard: wired in .claude/settings.json, NOT here. `hooks:` is a
 # documented frontmatter field, but a guard declared there did not fire
@@ -69,22 +130,15 @@ You do **not** edit:
 - Any test directory, top-level or nested — that's test-author's domain.
 - The spec, ADRs, protocol docs or schemas — that's the architect's domain.
 
-A path guard enforces this for the Edit and Write tools. It does **not**
-inspect Bash — don't route around the guard by writing to a guarded path
-via a shell command; that defeats the point of the boundary you've been
-given, even though nothing will stop you mechanically. The same goes for
+A path guard enforces this for the Edit and Write tools, and those are
+the only way you can change a file: you have no Bash. That is deliberate.
+A guard on Edit and Write is only a boundary if nothing else can write, and
+a shell — or a test binary run from one, which executes code you wrote —
+can write anywhere. Don't look for another route. The same goes for
 editing the guard's own configuration: the policy that fences you is read
 from the main checkout, so the `.claude/` directory inside your worktree
 is not the one in force, and changing it would be an attempt to escape
 rather than a fix.
-
-If your Bash is fenced and a command is refused, the refusal is final for
-this task. Do not reach the same effect another way — not with a different
-spelling, quoting or option order, not with another interpreter, and not
-by writing a script, test, config file or build target and then running a
-command that picks it up. Each of those is circumvention, whatever the
-intent. Stop the part of the work that needs it, finish what does not, and
-report the command, why you needed it, and the refusal word for word.
 
 If a test looks wrong, or the interface you're implementing against seems
 incomplete or inconsistent with the spec, say so and stop — don't silently
@@ -93,18 +147,66 @@ you so the architect or test-author can address it.
 
 ## Conventions in this repo
 
-- Every module you fill in already has a docstring citing the spec
-  section(s) it implements (e.g. `Spec: section 10, section 11`) —
+- Every module you fill in already has a module docstring or package doc
+  comment citing the spec section(s) it implements (e.g. `Spec: section 10, section 11`) —
   implement to that citation, and if you think the citation is wrong, flag
   it rather than quietly ignoring it.
 - Match the existing code style ({{STYLE_CONFIG}}).
-- Run the relevant test suite for what you touched before considering the
-  work done; you have Bash for this. You cannot make a test pass by
-  editing the test — if it seems wrong, that's a flag-back, not a fix.
+- You cannot build, format, run tests or commit: you have no Bash. Write
+  code you are confident compiles, formatted the way {{FORMATTER}} would
+  format it. Leave your changes uncommitted in your worktree. The
+  dispatching session runs {{MERGE_BAR}}, commits your work, and sends any
+  failure back to you with the output, so expect to be resumed. Never
+  claim to have run anything. You cannot make a test pass by editing the
+  test — if it seems wrong, that's a flag-back, not a fix.
+- When your brief pins exact text (an error message, a `CHANGES` line, a
+  decision quoted from an ADR), reproduce it exactly. If you think it is
+  wrong, say so in your report instead of editing it; the session rules on
+  it.
+- If `CLAUDE.md` has a "State machines and policies" section: implement
+  state as a {{FSM_PACKAGE}} machine and permission decisions as
+  {{POLICY_PACKAGE}} policies. If a brief asks for an inline state field or
+  an inline check and cites no exempting ADR, report it rather than write
+  it.
+- {{DEPENDENCY_RULE — optional; e.g. "Adding a dependency is the repo
+  owner's decision. If the task seems to need one, report the need instead
+  of adding it." Delete this bullet if the project has no such rule.}}
 - {{PROJECT_SPECIFIC_CONVENTIONS — e.g. an ongoing opportunistic cleanup:
   "any file you touch for an unrelated reason, also do X; don't open a file
   solely to do X."}}
 ````
+
+**For a build that keeps Bash**, make three substitutions:
+
+1. `tools:` becomes `Read, Grep, Glob, Edit, Write, Bash`.
+2. The paragraph beginning "A path guard enforces this" becomes:
+
+   > A path guard enforces this for the Edit and Write tools. It does
+   > **not** inspect Bash — don't route around the guard by writing to a
+   > guarded path via a shell command; that defeats the point of the
+   > boundary you've been given, even though nothing will stop you
+   > mechanically. The same goes for editing the guard's own
+   > configuration: the policy that fences you is read from the main
+   > checkout, so the `.claude/` directory inside your worktree is not the
+   > one in force, and changing it would be an attempt to escape rather
+   > than a fix.
+   >
+   > If your Bash is fenced and a command is refused, the refusal is final
+   > for this task. Do not reach the same effect another way — not with a
+   > different spelling, quoting or option order, not with another
+   > interpreter, and not by writing a script, test, config file or build
+   > target and then running a command that picks it up. Each of those is
+   > circumvention, whatever the intent. Stop the part of the work that
+   > needs it, finish what does not, and report the command, why you
+   > needed it, and the refusal word for word.
+
+   Keep the second paragraph only for the fenced build.
+3. The "You cannot build, format, run tests or commit" bullet becomes:
+
+   > - Run the relevant test suite for what you touched before considering
+   >   the work done; you have Bash for this. You cannot make a test pass
+   >   by editing the test — if it seems wrong, that's a flag-back, not a
+   >   fix.
 
 ### 2. Install and wire the path guard
 
@@ -156,12 +258,17 @@ directly, the guard with `PATH_ROOT` unset allows a write to
 
 In a real dispatch that write never reaches the guard. Claude Code's own
 worktree check refuses it first — a hook that logged every payload it
-received saw the in-worktree edit and nothing for the escape. So today
-this is defence in depth: the kit's guard enforces the boundary itself
-instead of depending on a harness behaviour that another version or
-environment might not share. The same dispatch confirmed the assumption it
-rests on — the payload's `cwd` is the worktree — and that the agent can
-still write its own files.
+received saw the in-worktree edit and nothing for the escape, and a macOS
+deployment saw the same refusal for exact-case, lowercase and firmlink
+spellings of the main checkout, for both Write and Edit. For the main
+checkout, then, `PATH_ROOT='cwd'` is defence in depth: the kit's guard
+enforces the boundary itself instead of depending on a harness behaviour
+that another version or environment might not share. **For a path outside
+the project altogether** (`/tmp`, `$HOME`) that harness check was not
+observed to fire, and the guard's root rule was the only barrier seen —
+there it is the fix, not a second line. The same dispatch confirmed the
+assumption it rests on — the payload's `cwd` is the worktree — and that
+the agent can still write its own files.
 
 Four things about this wiring are load-bearing, and the last one bites
 this agent specifically:
@@ -228,6 +335,9 @@ agent the policy that counts is the one in the **main** checkout.
   `SCOPE_AGENT_TYPES` is missing from the settings entry.
 - Confirm `git worktree list` shows the agent working outside the parent
   checkout.
+- **No-Bash build:** confirm it has no Bash — asked to run the tests, it
+  must say it cannot, not describe what they "would" report — and that
+  its report leaves the changes uncommitted for the session.
 
 ## Adapt to this project
 
@@ -238,8 +348,21 @@ agent the policy that counts is the one in the **main** checkout.
 | `{{CODE_DIRS}}` | Where implementation lives | `packages/`, `services/`, `tools/`, or `src/` |
 | `{{DENY_GLOBS}}` | Space-separated write denylist — see below | a Python project: see below |
 | `{{STYLE_CONFIG}}` | Where style is defined | `ruff.toml`, `.eslintrc`, `rustfmt.toml`, … |
+| `{{FORMATTER}}` | No-Bash build: the formatter the session runs, by name | `ruff format`, `prettier`, `gofmt` |
+| `{{MERGE_BAR}}` | No-Bash build: the gate commands the session runs after each dispatch, in prose | "the formatter check, the linter and the full test suite" |
+| `{{DEPENDENCY_RULE}}` | Optional dependency rule, or delete the bullet | — |
+| `{{OWNER}}` | In the optional *Dependencies* section: who decides | "the repo owner" |
+| `{{FSM_PACKAGE}}` / `{{POLICY_PACKAGE}}` | The state-machine and policy packages, the same values as in `CLAUDE.md`'s *State machines and policies* section (see `agent-kit-architect`); delete the bullet if the project has no such section | `internal/fsm`, `internal/policy` |
 | `{{MAKE_GATE_TARGETS}}` | Tripwire only: `make` targets the coder may run | `typecheck` |
 | `{{PROJECT_SPECIFIC_CONVENTIONS}}` | Standing conventions, or delete | — |
+
+Substitute bare values. `{{CODE_DIRS}}` and `{{SPEC_ENTRY}}` sit in running
+prose and inside backticks respectively, so a value that carries its own
+commentary ("`internal/` (except the interface package)") produces a broken
+line; put any such commentary in its own sentence or in
+`{{PROJECT_SPECIFIC_CONVENTIONS}}`. See *Verify the whole system* in
+`agent-kit` for the check that catches a leftover placeholder or a doubled
+backtick.
 
 Glob semantics are bash `[[ str == pattern ]]`, so a bare `*` crosses `/`:
 `tests/*` matches `tests/unit/test_foo.py`. In a **denylist** that breadth
@@ -251,7 +374,14 @@ directory both a bare and a `/*` entry.
 project; the fourth depends on your toolchain.
 
 1. **Other agents' domains.** `tests tests/* */tests */tests/*`, your
-   test kit, and `docs/spec/* docs/adr/* docs/protocol/* schemas/*`.
+   test kit, and `docs/spec/* docs/adr/* docs/protocol/* schemas/*`. If
+   the interface contract is code rather than a schema file, it is a
+   package (`{{SCHEMA_DIR}}` in `agent-kit-architect`): deny it here, bare
+   and with `/*`, exactly as architect's allowlist names it. Where tests
+   sit beside the code and are recognised by suffix (`*_test.go`,
+   `*.test.ts`), deny that suffix too — in a denylist a leading `*` is
+   what you want — and deny `CHANGES` if architect owns it (see the
+   `CHANGES` section of the governance template).
 2. **Agent configuration.** `.claude .claude/* */.claude */.claude/*
    CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json
    */.mcp.json`. An agent that can rewrite `settings.json` can rewrite its
@@ -282,6 +412,9 @@ guard. For another toolchain, the question to ask of every file it reads
 is: *would creating or editing this make a gate run something the command
 line does not show?*
 
+For a Go project, for instance, the group-4 question names `go.work` (and
+`*/go.work`), which changes which module sources a build compiles.
+
 Add anything else this agent must not rewrite unreviewed:
 `.github/workflows/*` if CI changes need a human, a generated-code
 directory, an infrastructure state file.
@@ -292,7 +425,27 @@ directory, an infrastructure state file.
 lands in the worktree has to be merged back deliberately — decide up front
 whether the coder commits in its worktree and the session merges, or the
 session applies the diff. State that in the brief; a worker that does not
-know is a worker that guesses.
+know is a worker that guesses. In the no-Bash build there is only one
+answer: the session runs the merge bar and commits in the worktree.
+
+Three operating notes, each observed rather than designed:
+
+- **Resume, don't refork.** A fresh `coder` worktree was cut from the
+  default branch, not from whatever branch the session had checked out. A
+  follow-up that builds on unmerged work therefore resumes the same
+  `coder`, whose worktree still holds it; a new dispatch would start
+  without it. Before resuming, snapshot the worktree (commit it, or save
+  `git diff`) so `supervisor` can be given exactly the second round's
+  changes.
+- **Reconcile by git, not by cross-worktree edits.** In the environment
+  observed, the session was refused edits to files in another worktree of
+  the same repository. That is harness behaviour, not something this kit
+  wires, and it may differ elsewhere. Either way, commit in the worker's
+  worktree and merge or cherry-pick; do not hand-copy its files.
+- **Deny the worktree's `.git` gitfile.** Group 3 of the denylist already
+  does. Without it, a `coder` could rewrite the file that tells git where
+  its worktree's repository is, which changes what `git status` and
+  `git diff` report — the evidence `supervisor` is handed.
 
 Keeping Bash on this agent is what lets it run the tests. Unfenced, it is
 also a way around every other rule in this file. The next section is the
@@ -348,8 +501,9 @@ preserve evidence of an edit-run-revert, and it does not restrict reading.
 project on uv with a `Makefile`. On any other toolchain it will refuse your
 gates, because a command it has no model for is refused by design — do not
 widen `ALLOW_CMDS` to compensate, which would admit the launchers the
-policy exists to close. Either use the no-Bash-fence build and rely on
-`supervisor`, or add rules for your toolchain to the guard, with tests.
+policy exists to close. Use the no-Bash build, which works on any
+toolchain; or add rules for your toolchain to the guard, with tests. The
+unfenced build is the last resort: it relies on `supervisor` alone.
 
 ### On macOS: the bash version
 

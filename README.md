@@ -87,12 +87,13 @@ Two consequences worth knowing before you trust an install:
 
 ## The guards are tested here
 
-`tests/hooks/` runs both hooks as real subprocesses — 1,254 cases once
+`tests/hooks/` runs both hooks as real subprocesses — 1,290 cases once
 parametrised — feeding each a `PreToolUse` payload and asserting on the
 exit status and the refusal text. The "configured" tests run every policy
 in `tests/hooks/fixtures/settings.json`, a complete instantiation of the
-wiring the skills document, so a glob change that opens a hole fails CI
-rather than someone's project. It needs Python, pytest, bash and jq:
+wiring the skills document, and the alternative `test-author` read
+allowlist in `tests/hooks/fixtures/settings-read-allowlist.json`, so a
+glob change that opens a hole fails CI rather than someone's project. It needs Python, pytest, bash and jq:
 
 ```bash
 python -m pytest tests/hooks -q
@@ -120,10 +121,15 @@ it once on the machine that will run your agents.
 approved Bash command under your login shell, which is zsh on a Mac, not the
 bash the guard is written in. zsh runs a command for `=(cmd)`, for a glob
 qualifier such as `*(e:cmd:)`, and for `~[name]`, none of which bash reads that
-way, so `bash-guard.sh` refuses a parenthesis outside quotes and `~[`. And the
+way, so `bash-guard.sh` refuses a parenthesis outside quotes and `~[`. Claude
+Code's own shell setup may also define `grep`, `find` and `rg` as functions
+that run ugrep, bfs and ripgrep (observed with `whence -w`/`functions` in a
+Bash tool call on macOS), so the guard refuses ugrep's command-running and
+config options for `grep` and bfs's `-rm` for `find`; it does not rely on
+those functions' own filtering, which can change with any release. And the
 default macOS volume is case-insensitive, so `path-guard.sh` folds case when it
 matches `DENY_GLOBS` (`.GITHUB/x.yml` is `.github/x.yml`); `ALLOW_GLOBS` and
-`EXEMPT_GLOBS` stay exact. Both were found by an audit of a deployment; see
+`EXEMPT_GLOBS` stay exact. All of these were found on deployments; see
 `VERIFICATION.md`.
 
 ## Developing the skills
@@ -159,9 +165,10 @@ See `.github/PROTECTION.md`.
   implementation, so its tests encode the spec rather than the code's
   current behaviour.
 - **Enforcement, not instruction.** The boundaries are `PreToolUse` hooks,
-  not paragraphs. Where enforcement is impossible (the guard cannot inspect
-  Bash, and `coder` needs Bash to run tests) the prompt says so plainly and
-  `supervisor` covers the gap.
+  not paragraphs. The path guard sees only Edit and Write, so the
+  recommended `coder` has no Bash and the session runs its gates. Where a
+  project keeps Bash on `coder` anyway, enforcement is impossible, the
+  prompt says so plainly and `supervisor` covers the gap.
 - **Plans separated from dispatch.** `architect` has no `Agent` tool; it
   hands back ready-to-dispatch briefs and the session dispatches them, so a
   `supervisor` finding is one hop from the human.
@@ -172,8 +179,10 @@ See `.github/PROTECTION.md`.
 
 ## What it does not give you
 
-- A sandbox: `coder` keeps Bash, so its guard is a strong default plus
-  `supervisor`, not containment.
+- A sandbox: nothing is OS-enforced. A `coder` that keeps Bash has a guard
+  that is a strong default plus `supervisor`, not containment; the no-Bash
+  `coder` closes that route, but the session that runs its gates is not
+  sandboxed either.
 - Protection against a bad brief: a worker that does exactly what a wrong
   brief said passes every check here.
 - Test quality: clean-room tests encode the spec — including its mistakes.

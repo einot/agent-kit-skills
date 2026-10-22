@@ -16,7 +16,7 @@ repair one without the rest:
 | Skill | Agent | Writes? | Bash? |
 | --- | --- | --- | --- |
 | `agent-kit-architect` | `architect` | docs + schemas only | no |
-| `agent-kit-coder` | `coder` | implementation only, in a worktree | yes, unfenced |
+| `agent-kit-coder` | `coder` | implementation only, in a worktree | no (recommended), fenced, or unfenced |
 | `agent-kit-test-author` | `test-author` | tests only, cannot read the code | no |
 | `agent-kit-reviewer` | `reviewer` | no | no |
 | `agent-kit-security-auditor` | `security-auditor` | no | optional, fenced |
@@ -44,10 +44,12 @@ and the easiest one to accidentally break — see `agent-kit-test-author`.
 **Enforcement, not instruction.** The boundaries above are `PreToolUse`
 hooks, not paragraphs. `path-guard.sh` polices which paths an agent may
 read or write; `bash-guard.sh` is a default-deny fence over the Bash tool.
-Where enforcement is impossible — no Bash policy can stop an agent that
-writes the code a gate runs — the prompt says so plainly, the optional
-`coder` tripwire makes circumvention leave evidence, and `supervisor`
-reads that evidence.
+The path guard sees only Edit and Write, so it is a boundary only for an
+agent with no other way to write: the recommended `coder` has no Bash, and
+the session runs its gates. Where a `coder` keeps Bash, enforcement is
+impossible — no Bash policy can stop an agent that writes the code a gate
+runs — so the prompt says so plainly, the optional tripwire makes
+circumvention leave evidence, and `supervisor` reads that evidence.
 
 **Both guards fail closed.** Claude Code blocks a tool call only when a
 hook exits 2; any other non-zero exit is a non-blocking error and the call
@@ -187,10 +189,11 @@ project — and for a worktree-isolated agent the second base is the **main
 checkout**. Run directly, the guard with `PATH_ROOT` unset allows a
 `coder` in `.claude/worktrees/agent-…/` to write
 `<main checkout>/packages/…` by absolute path; with `PATH_ROOT='cwd'` it
-refuses. In a real dispatch, in the environment this kit was tested in,
+refuses. In a real dispatch, in the environments this kit was tested in,
 Claude Code's own worktree check refused that write *before any hook ran*
-— so this is defence in depth, not a live hole: it makes the kit's guard
-enforce the boundary itself rather than rest on the harness. Also
+— so for the main checkout this is defence in depth. For a path outside
+the project altogether (`/tmp`, `$HOME`) no harness check was observed,
+and the guard's root rule was the only barrier: there it is the fix. Also
 confirmed by dispatch: the payload's `cwd` for such an agent is its
 worktree, so `PATH_ROOT='cwd'` does not lock it out of its own files.
 `coder` gets `cwd`; every other policy gets `project`.
@@ -272,8 +275,9 @@ Four things the template gets right that a naive version gets wrong:
   (`packages/*/tests/*`, not `*/tests/*`). A bare `*` crosses `/`, so
   `*/tests/*` also matches `docs/spec/tests/fake.md` — tested: the old
   glob let `test-author` write into the architect's spec tree.
-- **`test-author`'s read denylist covers derived artifacts, not just
-  source directories.** A coverage HTML report (`htmlcov/`) embeds the full
+- **`test-author`'s read policy covers derived artifacts, not just
+  source directories.** Better still, make it an allowlist where the
+  readable set can be enumerated — see `agent-kit-test-author`. A coverage HTML report (`htmlcov/`) embeds the full
   implementation source; git's object store holds every version of it; a
   type checker's cache records its signatures. Tested: under a denylist
   naming only the source trees, `test-author` could read all three, which
@@ -282,7 +286,8 @@ Four things the template gets right that a naive version gets wrong:
   .ruff_cache .hypothesis .uv` and each with `/*`, plus `snapshots
   snapshots/*` if you use snapshot tests.
 - **`coder` gets `PATH_ROOT='cwd'`**, for the worktree reason above —
-  defence in depth behind the harness's own worktree check.
+  defence in depth for the main checkout, and the only barrier observed
+  for paths outside the project.
 
 ### 3. The write-capable agents
 
@@ -317,7 +322,9 @@ the supervisor protocol, for why.
 
 The agent files constrain the subagents. These constrain the session. Add
 them adjusted to the project (the supervisor section lives in
-`agent-kit-supervisor`):
+`agent-kit-supervisor`). `{{CHANGES_OWNER}}` names the one writer of
+`CHANGES` — `architect`, with `CHANGES` in its allowlist and in
+`coder`'s denylist, is one working choice; the session itself is another:
 
 ````markdown
 ## Orchestration role
@@ -336,8 +343,8 @@ is yours.
 **No exception for "mechanical" edits.** Every test file change goes
 through `test-author`, full stop — including a one-line formatting fix, a
 lint-only rename, or any other change that looks too small or too
-obviously safe to bother delegating. `test-author` has no Bash and so
-cannot run a formatter itself; that means making the edit by hand with
+obviously safe to bother delegating. `test-author` (and `coder`, in its
+no-Bash build) has no Bash and so cannot run a formatter itself; that means making the edit by hand with
 Edit until the content matches, not an excuse to make the edit directly
 instead. The same holds for `coder`'s and `architect`'s domains: "it's
 tiny" is never a reason to touch code, tests, or specs/schemas/ADRs
@@ -354,6 +361,13 @@ because the change would make the job in front of it easier or faster. If
 an agent's configuration looks like it is blocking legitimate work, say so
 and let the user decide; changing it unasked defeats the point of having
 the constraint.
+
+**Briefs are inline and self-contained.** Paste every brief into the
+dispatch. Never point a path-guarded agent at a file outside its policy
+root, such as a scratchpad or temp directory: the root rule refuses it.
+When a brief pins exact text (ADR decision text, a `CHANGES` line), the
+worker reproduces it and reports any problem with it instead of editing
+it; the session rules on each problem.
 
 **Agent guards.** The subagent path and Bash guards live in
 `.claude/settings.json`, scoped per agent with `SCOPE_AGENT_TYPES`, and
@@ -395,6 +409,8 @@ when a running deployment needs action to keep working. If you are unsure
 whether a change qualifies, it does not — say so in your report rather
 than writing a speculative entry.
 
+{{CHANGES_OWNER}} writes `CHANGES`, and no other agent edits it.
+
 ## Disabled CI coverage
 
 Anything switched off in CI is recorded here together with the condition
@@ -408,7 +424,20 @@ relies on someone remembering.
 Before merging, the full suite must pass: {{TEST_COMMANDS}}. Run those
 commands so a failing one is actually visible — piping each to `tail`
 hides its exit status and will report a red gate as green.
+
+Before a fix lands, run its new tests against the code without the fix
+and record which fail; re-run if a test changes. A test that passes
+without the fix proves nothing about it. The session runs this red run,
+because `test-author` cannot.
 ````
+
+`agent-kit-coder` adds a paragraph to this for its no-Bash build, and an
+optional *Dependencies* section; `agent-kit-supervisor` adds the
+supervisor protocol and a note on keeping the evidence it is given.
+**Recommended:** a *State machines and policies* section (explicit
+transition tables, pure permission policies, ADR-recorded exemptions),
+whose text and installer notes are in `agent-kit-architect`. Delete it for
+a project with little state.
 
 ### 7. Optional: a pre-1.0 standing order
 
@@ -457,7 +486,9 @@ them — which is the failure this kit was built to catch.
 reading a config file.
 
 1. `bash -n` passes on both hooks, both are executable, and `jq` is
-   installed.
+   installed. `grep -n '{{\|``' .claude/agents/*.md` prints nothing: a
+   leftover placeholder or a doubled backtick means a substitution went
+   wrong, and installs have shipped both.
 2. `coder` is denied an edit to a test file and to a spec file, and the
    refusal text comes from the path guard. A platform message about
    "allowed working directories" instead means the guard never ran.
@@ -493,11 +524,12 @@ before anyone noticed it had never once been invoked.
 
 ## What this kit does not give you
 
-- **A sandbox.** Nothing here is OS-enforced. `coder` writes the code its
-  own test suite runs, so no command policy can stop it running arbitrary
-  code; the optional Bash tripwire makes doing so leave evidence in git and
-  removes any doubt that it was circumvention, and `supervisor` reads that
-  evidence — that is detection, not containment. `bash-guard.sh` is a
+- **A sandbox.** Nothing here is OS-enforced. A `coder` with Bash writes
+  the code its own test suite runs, so no command policy can stop it
+  running arbitrary code; the optional tripwire makes doing so leave
+  evidence, and `supervisor` reads it — detection, not containment. The
+  no-Bash `coder` closes that route by not having it, and the gates it
+  cannot run are run by the session, which is not sandboxed either. `bash-guard.sh` is a
   shell script reasoning about shell syntax, which is why
   `security-auditor` gets paired with `supervisor` once it has Bash.
 - **Closure of every known gap.** The hooks here are complete through the
