@@ -149,6 +149,13 @@ GUARD = REPO_ROOT / "skills" / "agent-kit" / "hooks" / "path-guard.sh"
 # reference wiring the skills document, instantiated for an example
 # layout, so the "configured" tests pin that wiring to real behaviour.
 SETTINGS_PATH = Path(__file__).resolve().parent / "fixtures" / "settings.json"
+# The alternative test-author read policy agent-kit-test-author recommends: an
+# allowlist of what the agent may read, instead of a denylist of what it may
+# not. It is a separate file because both shapes are scoped to test-author, and
+# a project installs one or the other, never both.
+READ_ALLOWLIST_SETTINGS_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "settings-read-allowlist.json"
+)
 
 BASH = shutil.which("bash")
 JQ = shutil.which("jq")
@@ -507,11 +514,13 @@ def _split_command(command: str) -> tuple[dict[str, str], Path]:
     return env, path if path.is_absolute() else REPO_ROOT / path
 
 
-def configured_policy(agent_name: str, tools: frozenset[str]) -> tuple[dict[str, str], Path]:
+def configured_policy(
+    agent_name: str, tools: frozenset[str], settings_path: Path = SETTINGS_PATH
+) -> tuple[dict[str, str], Path]:
     """The live policy for one agent and tool set, read from settings.json."""
-    if not SETTINGS_PATH.is_file():
-        pytest.fail(f"{SETTINGS_PATH} does not exist; no policy is wired for {agent_name}")
-    settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    if not settings_path.is_file():
+        pytest.fail(f"{settings_path} does not exist; no policy is wired for {agent_name}")
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
     for entry in settings.get("hooks", {}).get("PreToolUse", []):
         matched = {part.strip() for part in entry.get("matcher", "").split("|")}
         if not tools <= matched:
@@ -521,7 +530,7 @@ def configured_policy(agent_name: str, tools: frozenset[str]) -> tuple[dict[str,
             if agent_name in env.get("SCOPE_AGENT_TYPES", "").split():
                 return env, script
     pytest.fail(
-        f"no PreToolUse policy in {SETTINGS_PATH} matches {sorted(tools)} and names "
+        f"no PreToolUse policy in {settings_path} matches {sorted(tools)} and names "
         f"'{agent_name}' in SCOPE_AGENT_TYPES; see test_agent_hook_wiring.py"
     )
 
@@ -727,6 +736,86 @@ def test_configured_test_author_read_policy_denies_an_unscoped_search() -> None:
     policy, script = configured_policy("test-author", frozenset({"Read", "Grep", "Glob"}))
     result = run_guard("Grep", policy=policy, agent_type="test-author", script=script)
     assert_denied(result, "test-author running an unscoped Grep")
+
+
+# The allowlist shape of the same read policy. A denylist admits every spelling
+# and every derived copy of the implementation it does not anticipate -- a
+# coverage report, git's objects, a tool cache, a build directory, another
+# agent's worktree -- and each derived-artifact bypass this kit has fixed was a
+# denylist miss. An allowlist refuses all of them without naming them. Allow
+# globs are matched exactly, so a case variant of an allowed tree is refused
+# too rather than admitted.
+READ_ALLOWLIST_CASES = [
+    ("Read", SPEC_FILE, True),
+    ("Read", SCHEMA_FILE, True),
+    ("Read", TOP_LEVEL_TEST_FILE, True),
+    ("Read", NESTED_TEST_FILE, True),
+    ("Read", TESTKIT_FILE, True),
+    # Each directory is listed bare as well as with `/*`, so a Grep of the
+    # directory itself works.
+    ("Grep", "docs", True),
+    ("Grep", "tests", True),
+    ("Grep", "services/ingest/tests", True),
+    ("Read", IMPLEMENTATION_FILE, False),
+    ("Read", SERVICE_FILE, False),
+    ("Read", TOOL_FILE, False),
+    ("Grep", "packages", False),
+    ("Grep", "services", False),
+    ("Grep", "packages/acme-core/src", False),
+    # Derived copies of the implementation, none of them named by the policy.
+    ("Read", "htmlcov/packages_acme-core_src_acme_core_window_py.html", False),
+    ("Read", ".git/objects/ab/cdef0123456789", False),
+    ("Read", ".mypy_cache/3.12/acme/core/window.data.json", False),
+    ("Read", "build/lib/acme/core/window.py", False),
+    ("Read", ".claude/worktrees/agent-1/packages/acme-core/src/acme/core/window.py", False),
+    ("Grep", ".claude/worktrees", False),
+    # Agent configuration inside an allowed tree stays denied.
+    ("Read", "docs/.claude/settings.json", False),
+    # Exact case: a variant of an allowed tree matches no allow glob.
+    ("Read", "TESTS/test_x.py", False),
+    ("Read", "Docs/spec/acme_spec_1.md", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "path", "allowed"),
+    READ_ALLOWLIST_CASES,
+    ids=[f"{tool}-{'allow' if ok else 'deny'}-{path}" for tool, path, ok in READ_ALLOWLIST_CASES],
+)
+def test_configured_test_author_read_allowlist(tool_name: str, path: str, allowed: bool) -> None:
+    """The allowlist read policy admits the spec, the schemas and the tests, and
+    refuses everything else, including copies of the implementation it never
+    names."""
+    policy, script = configured_policy(
+        "test-author", frozenset({"Read", "Grep", "Glob"}), READ_ALLOWLIST_SETTINGS_PATH
+    )
+    kwargs: dict[str, Any] = (
+        {"file_path": under_repo(path)} if tool_name == "Read" else {"search_path": path}
+    )
+    result = run_guard(
+        tool_name,
+        policy=policy,
+        agent_type="test-author",
+        script=script,
+        **kwargs,
+    )
+    if allowed:
+        assert_allowed(result, f"test-author reading {path} under the read allowlist")
+    else:
+        assert_denied(result, f"test-author reading {path} under the read allowlist")
+
+
+@pytest.mark.parametrize("search_path", [None, "."], ids=["unscoped", "project-root"])
+def test_configured_test_author_read_allowlist_denies_a_whole_project_search(
+    search_path: str | None,
+) -> None:
+    policy, script = configured_policy(
+        "test-author", frozenset({"Read", "Grep", "Glob"}), READ_ALLOWLIST_SETTINGS_PATH
+    )
+    result = run_guard(
+        "Grep", policy=policy, search_path=search_path, agent_type="test-author", script=script
+    )
+    assert_denied(result, f"test-author running a Grep with path {search_path!r}")
 
 
 def test_configured_policies_ignore_the_top_level_session() -> None:
@@ -3281,7 +3370,6 @@ def test_a_guarded_write_whose_path_ends_with_a_newline_is_refused() -> None:
 
 TRAILING_NEWLINE_CONTROLS: list[tuple[str, str]] = [
     ("plain", under_repo("docs/x.md")),
-    ("newline-inside-a-name", f"{REPO_ROOT}/docs/a\nb.md"),
 ]
 
 
@@ -3290,11 +3378,13 @@ TRAILING_NEWLINE_CONTROLS: list[tuple[str, str]] = [
     [path for _, path in TRAILING_NEWLINE_CONTROLS],
     ids=[case_id for case_id, _ in TRAILING_NEWLINE_CONTROLS],
 )
-def test_a_newline_inside_a_path_is_judged_as_written(
+def test_a_path_without_a_trailing_newline_is_judged_as_written(
     path: str,
 ) -> None:
     """Decision 17, "The trailing newline": only a newline at the end is
-    refused. A newline inside a name is carried intact and judged as written."""
+    refused by that rule. Its other control, a newline inside a name, is
+    refused here instead, by this kit's ASCII rule (see the ASCII paths
+    section below)."""
     result = run_configured_rooted("architect", EDIT_WRITE, "Write", path)
     assert_allowed_silently(result, f"architect writing {repo_relative_id(path)!r}")
 
@@ -4052,8 +4142,6 @@ def test_a_write_with_a_leading_space_is_refused_for_the_caller_a_scoped_policy_
 
 EDGE_CONTROLS: list[tuple[str, str]] = [
     ("space-inside-a-name", under_repo("docs/a b.md")),
-    ("tab-inside-a-name", under_repo("docs/a\tb.md")),
-    ("non-ascii-letter-last", DOCS_X_PATH + "\xe9"),
 ]
 
 
@@ -4062,12 +4150,12 @@ EDGE_CONTROLS: list[tuple[str, str]] = [
     [path for _, path in EDGE_CONTROLS],
     ids=[case_id for case_id, _ in EDGE_CONTROLS],
 )
-def test_whitespace_inside_a_path_or_a_letter_at_its_end_is_judged_as_written(
-    path: str,
-) -> None:
-    """Decision 26: trimming reaches only the ends, so a space or a tab inside a
-    name names exactly what it spells, and a letter outside ASCII is not an edge
-    character. Each Write is in the architect's scope and allowed."""
+def test_a_space_inside_a_path_is_judged_as_written(path: str) -> None:
+    """Decision 26: trimming reaches only the ends, so a space inside a name
+    names exactly what it spells. The Write is in the architect's scope and
+    allowed. Decision 26's other two controls -- a tab inside a name and a
+    non-ASCII letter at the end -- are refused here instead, by this kit's ASCII
+    rule (see the ASCII paths section below)."""
     result = run_configured_rooted("architect", EDIT_WRITE, "Write", path)
     assert_allowed_silently(result, f"architect writing {edge_id(path)}")
 
@@ -4293,3 +4381,108 @@ def test_folding_case_for_deny_globs_does_not_leak_into_the_other_checks() -> No
     for path in ("a/../b.py", "~/x.py", "a//b.py"):
         result = run_guard("Write", policy=policy, file_path=path)
         assert_denied(result, f"the out-of-plain-form path {path!r}")
+
+
+# --- ASCII paths ------------------------------------------------------------
+#
+# This kit's rule, not upstream's: under a guarded policy, a path whose part
+# below the policy's root holds a byte outside printable ASCII is refused. On a
+# case-insensitive volume a Unicode case variant could name a denied path while
+# missing every deny glob -- U+017F, the long s, folds to `s` -- and no bash glob
+# reproduces Unicode folding. It departs from upstream's decision 26, which
+# admits a non-ASCII letter in a path; the two decision-26 controls it reverses
+# are the first two cases below, and the decision-17 control (a newline inside a
+# name) the third.
+
+ASCII_PHRASE = "outside printable ASCII"
+
+NON_ASCII_REFUSALS: list[tuple[str, str, frozenset[str], str, str]] = [
+    ("architect-Write-non-ascii-letter-last", "architect", EDIT_WRITE, "Write",
+     DOCS_X_PATH + "\xe9"),
+    ("architect-Write-tab-inside-a-name", "architect", EDIT_WRITE, "Write",
+     under_repo("docs/a\tb.md")),
+    ("architect-Write-newline-inside-a-name", "architect", EDIT_WRITE, "Write",
+     f"{REPO_ROOT}/docs/a\nb.md"),
+    ("coder-Write-long-s-for-tests", "coder", EDIT_WRITE, "Write",
+     under_repo("te\u017fts/helpers.py")),
+    ("coder-Edit-non-ascii", "coder", EDIT_WRITE, "Edit",
+     under_repo("services/ingest/src/acme/ingest/\u00e4pp.py")),
+    ("architect-Edit-control-inside", "architect", EDIT_WRITE, "Edit",
+     under_repo("docs/a\x01b.md")),
+    ("test-author-Read-non-ascii", "test-author", READ_GREP_GLOB, "Read",
+     under_repo("tests/\u00e9.py")),
+    ("test-author-Read-long-s-for-services", "test-author", READ_GREP_GLOB, "Read",
+     under_repo("\u017fervices/ingest/src/acme/ingest/app.py")),
+    ("test-author-Grep-path-non-ascii", "test-author", READ_GREP_GLOB, "Grep",
+     under_repo("tests/\u00e9")),
+    ("test-author-Glob-path-non-ascii", "test-author", READ_GREP_GLOB, "Glob",
+     under_repo("tests/\u00e9")),
+]
+
+
+@pytest.mark.parametrize(
+    ("agent_name", "tools", "tool_name", "path"),
+    [case[1:] for case in NON_ASCII_REFUSALS],
+    ids=[case[0] for case in NON_ASCII_REFUSALS],
+)
+def test_a_path_outside_printable_ascii_is_refused(
+    agent_name: str, tools: frozenset[str], tool_name: str, path: str
+) -> None:
+    """A Write, Edit, Read, Grep or Glob path with a non-ASCII or control byte
+    below the root is refused under every configured policy, whatever its globs
+    would say: `te\u017fts/helpers.py` matches none of the coder's deny globs,
+    `\u017fervices/...` none of the test-author's read denials, and
+    `tests/\u00e9.py` would match the test-author's read exemptions."""
+    result = run_configured_rooted(agent_name, tools, tool_name, path)
+    reason = assert_denied(result, f"{agent_name} {tool_name} of {edge_id(path)}")
+    assert ASCII_PHRASE in reason, reason
+
+
+# Glob's `pattern` and Grep's `glob` are held to ASCII by the search-pattern
+# rule (decision 21), not by the ASCII path rule; these pin that they stay so.
+NON_ASCII_SEARCH_PATTERNS: list[tuple[str, str, dict[str, Any]]] = [
+    ("Glob-pattern", "Glob", {"path": "tests", "pattern": "\u00e9*.py"}),
+    ("Grep-glob", "Grep", {"path": "tests", "pattern": "PROBE", "glob": "*.\u00e9"}),
+]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    [case[1:] for case in NON_ASCII_SEARCH_PATTERNS],
+    ids=[case[0] for case in NON_ASCII_SEARCH_PATTERNS],
+)
+def test_a_search_pattern_outside_ascii_is_refused(
+    tool_name: str, tool_input: dict[str, Any]
+) -> None:
+    result = run_test_author_search(tool_name, tool_input)
+    reason = assert_denied(result, f"test-author {tool_name} with {ascii(tool_input)}")
+    assert "may contain only letters, digits" in reason, reason
+
+
+def test_only_the_part_below_the_root_is_held_to_ascii() -> None:
+    """A project that lives under a non-ASCII directory keeps working: the rule
+    judges the part every glob list matches, not the root's own spelling."""
+    root = "/srv/pr\u00f8ject"
+    policy = {"PATH_ROOT": "project", "ALLOW_GLOBS": "docs/*"}
+    result = run_rooted(
+        "Write", policy=policy, file_path=f"{root}/docs/x.md", cwd=root, project_dir=root
+    )
+    assert_allowed_silently(result, "a Write to docs/x.md under a non-ASCII project root")
+
+
+def test_the_ascii_rule_leaves_an_unguarded_caller_alone() -> None:
+    """The rule runs after the routing: the top-level session, which a scoped
+    policy does not name, is not refused a non-ASCII path."""
+    policy, script = configured_policy("architect", EDIT_WRITE)
+    path = DOCS_X_PATH + "\xe9"
+    result = run_rooted("Write", policy=policy, file_path=path, script=script)
+    assert_allowed_silently(result, f"the session writing {edge_id(path)}")
+
+
+def test_the_plain_form_rule_runs_before_the_ascii_rule() -> None:
+    """A path out of plain form keeps that denial, whatever else it holds."""
+    path = under_repo("docs/../\u00e9.md")
+    result = run_configured_rooted("architect", EDIT_WRITE, "Write", path)
+    reason = assert_denied(result, f"architect writing {edge_id(path)}")
+    assert "'.' or '..' component" in reason, reason
+    assert ASCII_PHRASE not in reason, reason

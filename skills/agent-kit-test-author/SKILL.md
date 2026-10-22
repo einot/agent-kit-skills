@@ -37,6 +37,19 @@ hide. Denying only leaf paths makes the guard trivially bypassable. An
 unscoped `Grep`/`Glob` with no `path` at all, or one pointing at the
 project root, is refused for the same reason.
 
+### Where the read set can be enumerated, make it an allowlist
+
+The read policy above is a denylist, and a denylist admits every spelling
+and every derived copy of the implementation it does not anticipate:
+coverage HTML, git objects, tool caches, build output, other agents'
+worktrees under `.claude/worktrees/`. Each derived-artifact bypass this kit
+has fixed was a denylist miss, and the list keeps growing. An allowlist
+refuses all of them without naming them. If the set of things
+`test-author` should read — the spec, the ADRs, the protocol docs, the
+interface contracts and the tests — can be enumerated, wire the read
+policy as an allowlist instead (see *Install*, step 2). Keep the denylist
+for a layout whose readable set cannot be enumerated.
+
 ### Why there is a write allowlist too
 
 Without it, the read rule rests on a hook while the write side rests on
@@ -48,7 +61,8 @@ something to edit into existence.
 ### Why it has no Bash
 
 Bash would be a trivial way to `cat` around the read guard. The cost is
-that this agent cannot run what it writes; `coder` or CI does that.
+that this agent cannot run what it writes; the dispatching session or CI
+does that.
 
 ## Install
 
@@ -59,7 +73,7 @@ Replace every `{{...}}` placeholder (see *Adapt* below) before writing.
 ````markdown
 ---
 name: test-author
-description: Writes {{PROJECT}} tests (unit/property/integration/e2e/bench) purely from the spec, ADRs, protocol docs and JSON-schema interfaces — never by reading the implementation under test. Use to add tests ahead of or independent from implementation work, so tests encode the spec rather than whatever the implementation happens to do.
+description: Writes {{PROJECT}} tests (unit/property/integration/e2e/bench) purely from the spec, ADRs, protocol docs and interface contracts — never by reading the implementation under test. Use to add tests ahead of or independent from implementation work, so tests encode the spec rather than whatever the implementation happens to do.
 tools: Read, Grep, Glob, Edit, Write
 # Path guards (both of them): wired in .claude/settings.json, NOT here.
 # `hooks:` is a documented frontmatter field, but a guard declared there
@@ -97,11 +111,13 @@ You **can read**:
   actual source of truth.
 - Any test directory, top-level or nested — your own domain, including
   existing tests (read them for context/style, extend or add to them).
-- {{TESTKIT_DIR}} — shared test fixtures/generators, which count as test
-  infrastructure rather than implementation.
+- {{TESTKIT_BULLET — the line "`<testkit dir>` — shared test
+  fixtures/generators, which count as test infrastructure rather than
+  implementation.", or delete this bullet if there is no shared test kit.}}
 
-You **can write** only the last two: any test directory and
-{{TESTKIT_DIR}}. A second guard, on `Edit|Write`, is an allowlist —
+{{WRITE_SCOPE_SENTENCE — "You **can write** only test files and
+`<testkit dir>`." with a test kit, or "You **can write** only test
+files." without one.}} A second guard, on `Edit|Write`, is an allowlist —
 everything else is denied, including the spec and ADRs you read from. That
 is deliberate and symmetric with `coder`, which cannot write tests: a gap
 in the spec is something you report, not something you edit into
@@ -109,16 +125,21 @@ existence, and a test that fails against the implementation is a finding
 for the dispatcher, not a licence to change the code under test.
 
 You have no Bash tool, on purpose — it would be a trivial way to `cat`
-your way around the guard above. You can't run the tests you write;
-running them is coder's or CI's job. Write tests you're confident are
+your way around the guard above. You can't run the tests you write; the
+dispatching session or CI runs them. Write tests you're confident are
 syntactically valid and correctly target the public interface described
-in the spec/schema, and let coder or CI tell you if something doesn't
-collect or run.
+in the spec/schema, and expect to be resumed with the output if something
+doesn't collect or run. Never claim to have run anything.
+
+When your brief pins exact text (an assertion message, a decision quoted
+from an ADR), reproduce it exactly. If you think it is wrong, say so in
+your report instead of editing it; the session rules on it.
 
 ## What "from the spec" means in practice
 
 - A schema tells you the wire shape / event shape to assert against.
-- The spec section a module cites (visible in the module's own docstring,
+- The spec section a module cites (visible in the module's own docstring
+  or package doc comment,
   which you are allowed to read even though the rest of the file's
   implementation is guarded — reading a stub file that's 90% docstring and
   10% comments describing intent is expected) tells you the behavior to
@@ -191,6 +212,36 @@ one settings entry can only carry one:
 
 Merge these entries into the file's existing `PreToolUse` array rather
 than replacing it; each guarded agent in the kit contributes its own.
+
+**The allowlist read policy (recommended where the read set can be
+enumerated).** Replace the `Read|Grep|Glob` entry above with this one — a
+project installs one read policy for `test-author`, not both:
+
+````json
+{
+  "matcher": "Read|Grep|Glob",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "SCOPE_AGENT_TYPES='test-author' PATH_ROOT='project' ALLOW_GLOBS='{{TEST_READ_ALLOW_GLOBS}}' DENY_GLOBS='.claude .claude/* */.claude */.claude/* .git .git/* */.git */.git/*' ${CLAUDE_PROJECT_DIR}/.claude/hooks/path-guard.sh"
+    }
+  ]
+}
+````
+
+`{{TEST_READ_ALLOW_GLOBS}}` is the spec trees, the interface contracts and
+the test globs, each directory **bare as well as with `/*`** so a `Grep`
+of the directory itself works: for the example layout, `docs docs/*
+schemas schemas/* tests tests/* packages/*/tests packages/*/tests/* …
+packages/testkit packages/testkit/*`. Everything else — the
+implementation, `htmlcov/`, `.git/objects/`, caches, `build/`, other
+agents' worktrees — is refused without being named. `DENY_GLOBS` still
+carries agent configuration and `.git`, because an allowed tree can
+contain either. Allow globs are matched exactly, so `TESTS/x.py` is
+refused rather than admitted. The cost is the usual allowlist cost: a new
+spec directory is unreadable until it is added.
+`tests/hooks/fixtures/settings-read-allowlist.json` in this bundle is this
+policy for the example layout, and CI proves it.
 
 Four things about this wiring are load-bearing:
 
@@ -276,6 +327,10 @@ does not prove the hook was reached.
 - A `Read` under `htmlcov/` and under `.git/objects/` is denied — the
   implementation's source, outside the source trees.
 - A `Write` to `docs/spec/tests/x.md` is denied — the anchoring.
+- **Allowlist read policy:** a `Read` of a file the allowlist does not
+  name — under `build/`, or under another agent's worktree in
+  `.claude/worktrees/` — is denied, and a `Grep` of an allowed directory
+  named bare (`docs`, `tests`) succeeds.
 - Every denial above carries a reason whose text comes from the path
   guard. A refusal mentioning "allowed working directories" instead is
   the platform sandbox, and means this guard never ran.
@@ -293,7 +348,9 @@ does not prove the hook was reached.
 | `{{TOOL_CACHE_GLOBS}}` | Read denylist: your toolchain's caches and snapshot dirs | Python: `.mypy_cache .mypy_cache/* .pytest_cache .pytest_cache/* .ruff_cache .ruff_cache/* .hypothesis .hypothesis/* .uv .uv/* snapshots snapshots/*` |
 | `{{TEST_READ_EXEMPT_GLOBS}}` | Read exemptions, checked first — **anchored** | `tests tests/* packages/*/tests packages/*/tests/* services/*/tests services/*/tests/* tools/*/tests tools/*/tests/* packages/testkit packages/testkit/*` |
 | `{{TEST_WRITE_ALLOW_GLOBS}}` | Write allowlist — **anchored** | `tests/* packages/*/tests/* services/*/tests/* tools/*/tests/* packages/testkit/*` |
-| `{{TESTKIT_DIR}}` | Shared fixtures/generators, or delete | `packages/testkit/` |
+| `{{TEST_READ_ALLOW_GLOBS}}` | Allowlist read policy only: everything the agent may read — **anchored**, each directory bare and `/*` | `docs docs/* schemas schemas/* tests tests/* packages/*/tests packages/*/tests/* packages/testkit packages/testkit/*` |
+| `{{TESTKIT_BULLET}}` | The test-kit bullet, filled in, or delete the bullet | see the template |
+| `{{WRITE_SCOPE_SENTENCE}}` | One of the two sentences the template gives, by whether there is a test kit | see the template |
 | `{{SPEC_DIR}}` … `{{SCHEMA_DIR}}` | Doc trees the agent reads | `docs/spec/`, `docs/adr/`, `docs/protocol/`, `schemas/*.json` |
 
 **Each deny glob needs a bare entry and a `/*` entry** — `packages` *and*
@@ -306,6 +363,25 @@ directories live inside an otherwise-denied tree. If the project keeps
 tests beside the code (`src/foo/foo_test.go`, `src/foo/__tests__/`), the
 exemption globs have to match that layout precisely or the agent cannot
 read its own prior work.
+
+**Tests recognised by suffix.** Where tests sit beside code and are
+recognised by suffix (`*_test.go`, `*.test.ts`), split by suffix but
+anchor it at the code roots — `src/*_test.go`, `cmd/*_test.go`, never bare
+`*_test.go`, which also admits `docs/x_test.go` inside the architect's
+tree. Keep allow globs exact-case: a toolchain that recognises tests by an
+exact suffix compiles `x_TEST.go` as ordinary source, so a case-folding
+allow rule would let this agent write implementation.
+
+**If the interface contract is code**, it is a package
+(`{{SCHEMA_DIR}}`): add it to the read allowlist (or exempt it from the
+read denylist), bare and with `/*`, so this agent can read the contract it
+tests against.
+
+Substitute bare values: placeholders that sit inside backticks take a bare
+path, and commentary goes in its own bullet. An install that wrote a
+sentence into `{{TESTKIT_DIR}}`'s old slot shipped two broken sentences;
+the `{{TESTKIT_BULLET}}` and `{{WRITE_SCOPE_SENTENCE}}` forms exist so
+that "no test kit" has a clean spelling.
 
 A single-tree layout (`src/` only) works the same way: deny `src src/*`,
 exempt whatever test pattern that tree uses — anchored, `src/*/tests/*`

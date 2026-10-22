@@ -42,7 +42,7 @@ Replace every `{{...}}` placeholder (see *Adapt* below) before writing.
 ````markdown
 ---
 name: supervisor
-description: Read-only process/scope-compliance watchdog over this project's other subagents (coder, test-author, architect). Given a worker agent's literal instructions plus what it actually changed, verifies the worker did only what it was told and flags anything out of the ordinary — files touched outside scope, actions beyond the task, or anything resembling malicious/unsafe behavior. No Bash, no edits, no spawning other agents — emits findings as JSON only. The orchestrating session MUST stop all processing and report to the user immediately if this agent reports any finding.
+description: Read-only process/scope-compliance watchdog over this project's other subagents (coder, test-author, architect, and security-auditor when it has Bash). Given a worker agent's literal instructions plus what it actually changed, verifies the worker did only what it was told and flags anything out of the ordinary — files touched outside scope, actions beyond the task, or anything resembling malicious/unsafe behavior. No Bash, no edits, no spawning other agents — emits findings as JSON only. The orchestrating session MUST stop all processing and report to the user immediately if this agent reports any finding.
 tools: Read, Grep, Glob
 ---
 
@@ -61,8 +61,8 @@ vulnerabilities within a worker's authorized scope. Your only question is:
 
 Each time you're invoked, you'll receive:
 1. The literal, verbatim instructions given to a worker agent (`coder`,
-   `test-author`, `architect`, or any other agent that can write or
-   execute) for one unit of work.
+   `test-author`, `architect`, a `security-auditor` with Bash, or any
+   other agent that can write or execute) for one unit of work.
 2. That worker's own report of what it changed (files touched, commits
    made, commands run) — treat this report as a claim to verify against
    the actual files, not as fact.
@@ -78,6 +78,16 @@ whitespace-only edit, or a change to a file that never mentions the
 feature by name. Treat the git evidence as the authoritative account of
 *what* changed; keep reading the files themselves to judge *what the
 changes do*.
+
+For an agent that should change nothing — an audit with a fenced Bash —
+the expected git evidence is empty, and confirming that it is empty is
+the question. A non-empty diff or status from such an agent is a finding,
+whatever its report says about it.
+
+For a worker resumed for a second round, the git evidence should be the
+diff between the snapshot the session took before resuming it and now.
+If you are given only the cumulative diff, say which changes you could
+not attribute to this round, as an `unverified` finding.
 
 If the git evidence is missing, say so as an `unverified` finding and
 answer only what you can. Do not fall back on ambient context — a git
@@ -96,7 +106,10 @@ simply wrong.
    to have done.
 2. **Actions.** Did the worker do anything its instructions explicitly
    forbade — told not to push and it pushed, told to commit only and it
-   merged, told to leave a file alone and it changed it anyway?
+   merged, told to leave a file alone and it changed it anyway? Editing
+   text the brief pinned verbatim (decision text, a `CHANGES` line, an
+   error message) is a finding even if the worker judged the text wrong:
+   the instruction was to reproduce it and report the problem.
 3. **Honesty of the report.** Does the worker's own summary match what
    you can actually observe by reading the files? A worker claiming "no
    changes to X" when X visibly changed, or claiming verification it
@@ -189,6 +202,16 @@ running under `isolation: worktree`, collect the evidence **from that
 worker's worktree** — the main checkout shows nothing, because the changes
 are not there.
 
+A probe dispatch — one sent to test a guard, or to see whether an agent
+can do something — is a dispatch like any other, and is paired the same
+way. A probe is exactly the dispatch most likely to go further than
+intended.
+
+**Resumed workers.** Before resuming a worker for a follow-up round,
+snapshot its state: commit it in the worktree, or save `git diff`. Give
+`supervisor` the diff between that snapshot and the state after the
+round. Without a snapshot it can only mark the second round `unverified`.
+
 Do not put claims about test runs into the brief expecting them to be
 checked. `supervisor` cannot execute anything, so a test-run claim comes
 back `unverified` every time; whether the suite passes is the session's
@@ -228,6 +251,18 @@ tool exists. This is deliberately the cautious reading — the fence is
 default-deny and carefully written, but it is a shell script, and the cost
 of pairing is one extra read-only review per audit.
 
+The evidence for a fenced `security-auditor` pairing looks different from
+a worker's, because a correct audit changes nothing. Hand `supervisor`
+the literal brief and the auditor's report as usual; the auditor's Bash
+commands verbatim; `git status --porcelain --ignored` from before and
+after the dispatch (both expected empty — `--ignored` also shows writes
+under ignored paths); and `git diff HEAD`, which covers staged changes
+too and is expected empty. A non-empty diff is a finding, whatever the
+report says about it. If `security-auditor` is ever reduced to
+Read/Grep/Glob again, the structural exemption returns: revert this rule
+rather than keep it out of caution, because a pairing requirement that no
+longer protects anything is just a cost.
+
 Subagents do not dispatch other subagents. `architect` has no `Agent`
 tool: it settles the interface, writes ready-to-dispatch briefs, and hands
 them back. The top-level session issues every dispatch and pairs every one
@@ -236,6 +271,12 @@ user instead of relayed through an agent, and keeps the decision to trust
 a worker's report with the session that can run the tests and read the git
 state.
 ````
+
+Keep the briefs, worker reports and git evidence somewhere durable until
+the pull request merges, so a pairing can be re-run or audited. A
+temporary scratchpad may be wiped between sessions; the harness's own
+subagent transcripts are the fallback, and where those live is
+harness-specific.
 
 ### 3. Verify
 
@@ -261,15 +302,20 @@ state.
 - Confirm `supervisor` does *not* report code-quality nits — if it does,
   its prompt has drifted into `reviewer`'s remit and the signal will be
   ignored within a week.
+- Pair every guard probe you dispatch while verifying the rest of the kit.
+  In a deployment, a `supervisor` review of a reworked guard's probe
+  dispatch found a gap the probe itself had not — the worktree's `.git`
+  gitfile was writable.
 
 ## Adapt to this project
 
 | Placeholder | Meaning |
 | --- | --- |
 | `{{PROJECT}}` | Project name |
+| `{{MODEL}}` / `{{OWNER}}` | The pinned model, in words; who decides agent configuration ("the repo owner") |
 
-That is the only substitution. The rest is deliberately project-agnostic:
-scope and honesty do not vary by codebase.
+Those are the only substitutions. The rest is deliberately
+project-agnostic: scope and honesty do not vary by codebase.
 
 If you rename the write-capable agents, update the list in both the agent
 file and the `CLAUDE.md` protocol — the pairing rule has to name the exact
@@ -291,12 +337,32 @@ For other findings, the session may act on a clear recommendation in the
 same turn as the verbatim report; where there are two defensible ways
 forward, it stops and asks.
 
+**Optional: low-severity judgement.** Some owners let the session judge
+whether to continue when every finding that is not `unverified` is
+`low`. Adopt it only as {{OWNER}}'s explicit standing order, and keep both
+carve-outs, which is what keeps it from becoming a way past the stop:
+
+````markdown
+**Low-severity findings.** By {{OWNER}}'s standing order, if every
+finding that is not `unverified` has `"severity": "low"`, the session may
+judge whether to carry on rather than stop. It still reports every
+finding verbatim first, and it says which way it judged and why. The full
+stop still applies to any finding of `medium` severity or higher, and to
+any finding that resembles a backdoor, credential or secret exfiltration,
+or a disabled safety or security check, whatever its severity.
+````
+
 ## Pick a model
 
 `supervisor` is the one agent where a weaker model is a false economy: it
 reads reports adversarially and its findings gate everything else. Pin the
 strongest model available, and record *why* in the agent file so a later
-reader does not "fix" the inconsistency with the other agents:
+reader does not "fix" the inconsistency with the other agents.
+
+Pin with a floating alias (`model: opus`), never a versioned id: a
+versioned pin goes stale silently when a newer model ships, and the
+agent quietly falls behind the one it was meant to track. `effort:` can be
+pinned the same way. The block to append:
 
 ````markdown
 ## Your model
@@ -304,8 +370,8 @@ reader does not "fix" the inconsistency with the other agents:
 You run on {{MODEL}}. This is a deliberate choice, recorded here so it is
 not mistaken for an oversight: other agents run on cheaper models and you
 were kept on this one on purpose. Do not treat the difference as a bug to
-be fixed, and do not change it — agent configuration changes only on the
-repo owner's direct instruction.
+be fixed, and do not change it — agent configuration changes only on a
+direct instruction from {{OWNER}}.
 ````
 
 ## Parsing the output: extract, don't assume
@@ -326,6 +392,7 @@ is that the session decides mechanically.
 
 ```text
 session ──brief──▶ coder / test-author / architect ──report──┐
+   │               (and a fenced security-auditor)            │
    │                                                          │
    │  session collects: git status --porcelain, git diff      │
    │  (from the worker's worktree, if it had one)             │

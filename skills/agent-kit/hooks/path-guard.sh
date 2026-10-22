@@ -157,6 +157,30 @@
 # matches strings and does not touch the filesystem (ADR-0018 decision 18,
 # Question 5).
 #
+# ASCII PATHS (this kit's rule, not upstream's).
+#
+# Under a guarded policy, a path whose part below the policy's root holds a
+# byte outside printable ASCII (0x20-0x7E) is refused, after the plain-form
+# rule and before the root rule and every glob list. The reason is case
+# folding. DENY_GLOBS fold case because a case-insensitive volume (the
+# macOS and Windows default) opens a case variant as the same file. But the
+# volume folds with Unicode rules -- U+017F LATIN SMALL LETTER LONG S, for
+# one, folds to `s` -- and no bash glob reproduces Unicode folding, so a
+# non-ASCII spelling could name `tests/...` while missing every deny glob.
+# This is the deployment's account of APFS; it has not been verified here
+# (see VERIFICATION.md). Refusing such a path fails closed. A control
+# character, tab included, is outside printable ASCII too and is refused
+# by the same test.
+#
+# Only the part below the root is judged, because that is the part every
+# glob list matches; a project that itself lives under a non-ASCII
+# directory keeps working. A path outside the root is judged whole, and is
+# refused either way. Glob's `pattern` and Grep's `glob` are already held to
+# ASCII by the search-pattern rule.
+#
+# This departs from upstream's ADR-0018 decision 26, which deliberately
+# admits a non-ASCII letter in a path (see VERIFICATION.md).
+#
 # SEARCH PATTERNS (ADR-0018 decision 21, fifth amendment).
 #
 # The path of a Grep or a Glob is vetted, but the pattern it applies under
@@ -315,6 +339,12 @@
 # strong default rather than a sandbox for agents that keep Bash.
 
 set -f -e -u -o pipefail
+
+# Byte semantics throughout (see ASCII PATHS below). The ASCII rule relies
+# on it, and so does the case folding of DENY_GLOBS: under the C locale
+# `nocasematch` folds only A-Z and a-z, which is exactly the folding that
+# matters once a guarded path outside printable ASCII is refused.
+export LC_ALL=C
 
 # Fail-closed exit (ADR-0018 decision 19, part 1; see A GUARD THAT FAILS
 # DENIES in the header). Installed first, so that it covers every line
@@ -563,6 +593,16 @@ fi
 if (( guarded )); then
   if [[ "/$file_path/" == */../* || "/$file_path/" == */./* || "$file_path" == *//* || "$file_path" == "~"* ]]; then
     deny "path guard: the path contains a '.' or '..' component, a '//' or a leading '~'. This guard matches a path exactly as written and resolves none of these, so it cannot vet the file or directory the tool would actually use. Give the path without any of them. The tool call is refused."
+  fi
+fi
+
+# ASCII paths (see ASCII PATHS in the header). Only under a guarded policy,
+# after the plain-form rule, so that a path out of plain form keeps that
+# denial, and before the root rule and EXEMPT_GLOBS, which exits 0 on a
+# match. `[:print:]` under LC_ALL=C is exactly 0x20-0x7E.
+if (( guarded )); then
+  if [[ "$rel" == *[![:print:]]* ]]; then
+    deny "path guard: the path contains a character outside printable ASCII. A case-insensitive volume can fold such a character onto an ASCII letter (U+017F, the long s, folds to 's'), and this guard cannot reproduce that folding, so it cannot vet the file the tool would actually open. Give the path in printable ASCII. The tool call is refused."
   fi
 fi
 

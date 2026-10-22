@@ -850,6 +850,44 @@ case "$nul_status" in
     ;;
 esac
 
+# --- Command length bound ------------------------------------------------
+# Before literal mode and every per-word rule, because several of the
+# checks below scale worse than linearly with the command: they use bash
+# pattern substitution and per-word loops over the command and its tokens,
+# and under bash 3.2 their cost grows much faster than the length. A hook
+# that runs past its timeout (60 s by default) may let the command through
+# unchecked, so a slow check is a bypass, and the one bound that holds for
+# every check, present and future, is a bound on the input.
+#
+# Measured on bash 3.2 by a deployment that runs this guard: 8,192
+# characters of quotes or backslashes took about 30 s to check, and 50,000
+# characters of `&& ls` took 228 s. At 2,048 characters, ten worst-case
+# ASCII and multibyte patterns (quotes, backslashes, `&&` chains, repeated
+# `git log -p`, Latin, CJK and emoji text) all checked in under 6 s. This
+# kit's own record is the same shape: a 16,384-character command took
+# 28.8 s alone on macOS bash 3.2 (VERIFICATION.md), half the default
+# timeout for a command of plain words, which leaves too thin a margin for
+# a worse one. No read-only inspection command needs to be long; the
+# longest an auditor sent on that deployment was about 200 characters.
+#
+# The limit is on UTF-8 BYTES of the RAW command, as jq reads it from the
+# payload, not on `${#command_str}`. `command_str` came through `$(...)`,
+# which drops trailing newlines, so the raw string is the longest form any
+# check sees; and multibyte text costs more per character in bash's UTF-8
+# handling, so a byte limit gives it proportionally fewer characters.
+#
+# This departs from upstream's ADR-0018 decision 25, which bounds the
+# command at 16,384 characters (see VERIFICATION.md). It fails closed: if
+# jq cannot produce a number, the command is refused.
+max_command_bytes=2048
+raw_command_bytes="$(printf '%s' "$input" | jq -r '(.tool_input.command // "") | utf8bytelength' 2>/dev/null)" || raw_command_bytes=""
+if ! [[ "$raw_command_bytes" =~ ^[0-9]+$ ]]; then
+  deny "bash guard: the command's length could not be measured, so the guard cannot confirm that it is short enough to vet within the hook's time limit. The command is refused."
+fi
+if (( raw_command_bytes > max_command_bytes )); then
+  deny "bash guard: the command is ${raw_command_bytes} bytes long, more than this guard's limit of ${max_command_bytes} bytes (UTF-8 bytes, not characters). Some of the checks this guard runs grow faster than the command's length, and a check that ran past the hook's time limit could let a command through unchecked, so a longer command is refused outright. Split the work into several shorter commands. The command is refused."
+fi
+
 [[ -n "$command_str" ]] || exit 0
 
 # --- Literal mode (ADR-0018 decision 3) ----------------------------------
@@ -1160,32 +1198,69 @@ done
 # `=(id)` that follows. An unterminated quote is refused. A `$` and a
 # backtick are already refused above, so the double-quote expansions that
 # run commands are unreachable.
+#
+# The quoting rules the scan applies are small and fixed: inside '...'
+# nothing is special and only a `'` ends the span; inside "..." a backslash
+# escapes the next character and a `"` ends the span; outside quotes a
+# backslash escapes the next character, a quote opens a span, and a
+# parenthesis is a hit. The command is refused on a hit, and when the scan
+# ends inside a quote.
+#
+# The scan runs in jq, not in a bash loop, and that is a safety property,
+# not a style choice. A character-by-character bash loop over `${s:i:1}`
+# is quadratic, because bash copies or re-walks the string on every
+# subscript: on bash 3.2 a 16,000-character quoted argument took over 6 s
+# to scan with the loop this replaces, and a deployment measured a
+# 100,000-character command at 108 s. A hook that runs past its timeout (60
+# s by default) may let the command through unchecked, so a slow check is a
+# bypass. jq's reduce over the code points is linear. The command length
+# bound above now caps its input at 2,048 bytes as well, so the jq scan is
+# a second line rather than the only one. The scan reads the
+# same `command_str` every other check here reads, so it judges exactly
+# the string the loop judged. It fails closed: if jq errors, or prints
+# anything but `false`, the command is refused. (This rule is the kit's
+# own, not upstream's; VERIFICATION.md records each such divergence.)
+#
+# zsh, more generally (none of this is enforced here, it is what to keep in
+# mind when adding a rule -- ask what zsh does to the command too, not only
+# bash):
+#
+#   * ALIAS expansion is ON in a non-interactive zsh, unlike bash. A user
+#     alias, global alias or shell function named after an allowed command
+#     (ls, grep, git, ...) rewrites that command after this guard approved
+#     it, and the guard cannot see it. That rests on the user's shell
+#     configuration, not on this script. Claude Code's own shell setup may
+#     define `find`, `grep` and `rg` as functions running bfs, ugrep and
+#     ripgrep; check_find and check_grep account for those.
+#   * EXTENDED_GLOB is off by default, so `^`, `#` and `~` are not glob
+#     operators.
+#   * History expansion does not happen in a non-interactive zsh, so `!!`
+#     passes through unchanged.
+#   * `=cmd` expands only to a command's path.
 paren_outside_quotes() {
-  local s="$1" n="${#1}" i ch state=none
-  for (( i = 0; i < n; i++ )); do
-    ch="${s:i:1}"
-    case "$state" in
-      single)
-        [[ "$ch" == "'" ]] && state=none
-        ;;
-      double)
-        if [[ "$ch" == '\' ]]; then
-          i=$(( i + 1 ))
-        elif [[ "$ch" == '"' ]]; then
-          state=none
-        fi
-        ;;
-      *)
-        case "$ch" in
-          "'") state=single ;;
-          '"') state=double ;;
-          '\') i=$(( i + 1 )) ;;
-          '(' | ')') return 0 ;;
-        esac
-        ;;
-    esac
-  done
-  [[ "$state" != none ]]
+  local verdict
+  if ! verdict="$(printf '%s' "$1" | jq -R -s -r '
+      explode
+      | reduce .[] as $c ({st: "none", esc: false, hit: false};
+          if .hit then .
+          elif .esc then .esc = false
+          elif .st == "single" then
+            (if $c == 39 then .st = "none" else . end)
+          elif .st == "double" then
+            (if $c == 92 then .esc = true
+             elif $c == 34 then .st = "none"
+             else . end)
+          else
+            (if $c == 39 then .st = "single"
+             elif $c == 34 then .st = "double"
+             elif $c == 92 then .esc = true
+             elif ($c == 40 or $c == 41) then .hit = true
+             else . end)
+          end)
+      | (.hit or .st != "none")' 2>/dev/null)"; then
+    return 0
+  fi
+  [[ "$verdict" != "false" ]]
 }
 
 if [[ "$command_str" == *'('* || "$command_str" == *')'* ]]; then
@@ -1377,11 +1452,20 @@ check_sort() {
 # whole words matched exactly, there is no clustering, no `=value` form
 # and no abbreviation (`-dele` is an error, not `-delete`), so exact
 # matching is the right shape for these rules.
+#
+# In Claude Code's shell `find` may be bfs, which accepts `-rm` as an alias
+# for `-delete`; keep this list in step with bfs's --help as well as find's
+# manual. Claude Code's shell setup can define `find` as a function that
+# runs bfs (observed on a macOS deployment, read with `whence -w` and
+# `functions find` in a Bash tool call), and before this rule
+# `find . -name x -rm` passed. bfs rejects abbreviated actions, so exact
+# matching still holds. Its other extra actions (-exit, -limit, -printx,
+# -quit) only print or stop.
 check_find() {
   local token
   for token in "$@"; do
     case "$token" in
-      -delete | -exec | -execdir | -ok | -okdir | -fprint | -fprint0 | -fprintf | -fls)
+      -delete | -rm | -exec | -execdir | -ok | -okdir | -fprint | -fprint0 | -fprintf | -fls)
         deny "bash guard: 'find ${token}' deletes files or runs another command for each match. Use find only to select paths (-name, -type, -path) and pipe the result into an allowed read-only command."
         ;;
     esac
@@ -1654,9 +1738,13 @@ check_rg() {
 }
 
 # `grep` is not one binary. On a stock Linux host it is GNU grep, which has no
-# option that writes a file or runs a program, but on a host where `grep` is
-# ugrep (Homebrew and other package managers install it under that name) it
-# has several: `--filter=COMMANDS` runs the commands you name on every file
+# option that writes a file or runs a program, but where `grep` is ugrep it
+# has several. Claude Code's own shell setup may define `grep`, `find` and
+# `rg` as functions that run ugrep, bfs and ripgrep (observed with
+# `whence -w`/`functions` in a Bash tool call on macOS); the rule does not
+# rely on that function's own filtering, which can change with any release.
+# A package manager can also install ugrep under the name `grep`. Its
+# options: `--filter=COMMANDS` runs the commands you name on every file
 # it searches, `--pager[=COMMAND]` and `--view[=COMMAND]` run a program,
 # `-Q`/`--query` starts an interactive terminal UI that opens an editor,
 # `--save-config[=FILE]` writes a configuration file, `--index` writes
@@ -1665,9 +1753,21 @@ check_rg() {
 # none of these, so refusing them costs nothing there and closes the hole
 # on a host where the name resolves to ugrep. Found by an audit of a
 # deployment where `grep --version` printed `ugrep 7.8.4`.
+#
+# `--format-open` is refused as well. It is not in that ugrep's --help;
+# it is refused because Claude Code's grep function lists it among the
+# options it keeps away from ugrep, and refusing an option that does not
+# exist costs nothing. Since every long option here goes through
+# matches_long, its prefixes are refused too, and that includes ugrep's
+# own output option `--format=FORMAT` and the shorter `--form`: an
+# over-refusal that fails closed. Write a custom output format some other
+# way, or report the need.
 check_grep() {
   local token
   for token in "$@"; do
+    if matches_long "$token" --format-open; then
+      deny "bash guard: 'grep ${token}' is, or abbreviates, --format-open, which Claude Code's grep function keeps away from ugrep, so this guard refuses it too -- and with it ugrep's --format output option, whose name is a prefix of it. Search the files with the plain options instead (-n, -i, -r, -E, -F, -P, -e, -c, -l, -A, -B, -C, --include, --exclude)."
+    fi
     if matches_long "$token" --filter --pager --view --query --save-config --config --index; then
       deny "bash guard: 'grep ${token}' is an option this guard refuses: on a host where grep is ugrep it runs a program, opens an interactive UI, or writes or loads a configuration or index file. Search the files with the plain options instead (-n, -i, -r, -E, -F, -P, -e, -c, -l, -A, -B, -C, --include, --exclude)."
     fi
