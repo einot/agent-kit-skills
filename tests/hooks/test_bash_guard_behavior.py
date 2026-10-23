@@ -2666,9 +2666,26 @@ def test_an_unterminated_quote_without_a_parenthesis_is_left_to_the_shell(tmp_pa
     assert_allowed(auditor("rg 'x", tmp_path), "an unterminated quote with no parenthesis")
 
 
-def test_a_zsh_dynamic_named_directory_is_refused(tmp_path: Path) -> None:
-    reason = assert_denied(auditor("ls ~[x]", tmp_path), "ls ~[x]")
-    assert_phrase(reason, "~[", "ls ~[x]")
+# zsh calls `zsh_directory_name` for `~[name]` only when neither the tilde
+# nor the bracket is quoted or escaped (verified in zsh 5.9), so `~[` goes
+# through the same quote-aware scan as a parenthesis.
+
+
+@pytest.mark.parametrize(
+    "command", ["ls ~[x]", "ls ~[x]/y", "cat ~[a-z]", "ls a ~[x]", "ls a; ls ~[x]"], ids=lambda c: c
+)
+def test_an_unquoted_tilde_bracket_is_refused(tmp_path: Path, command: str) -> None:
+    reason = assert_denied(auditor(command, tmp_path), command)
+    assert_phrase(reason, "~[", command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["rg '~[a-z]' f", 'rg "~[a-z]" f', 'ls ~"[x]"', r"ls \~[x]", r"ls ~\[x]", "ls ~", "ls a~b", "ls ~/x"],
+    ids=lambda c: c,
+)
+def test_a_tilde_bracket_that_is_quoted_or_escaped_is_allowed(tmp_path: Path, command: str) -> None:
+    assert_allowed(auditor(command, tmp_path), command)
 
 
 # --- grep: the options of a ugrep that answers to the name `grep` ---------
