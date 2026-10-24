@@ -131,15 +131,17 @@ fails to parse is still the wrong default.
 
 ### The behaviour suite
 
-`tests/hooks/`: 1,306 cases. On Linux with bash 5 (CI, Ubuntu 24.04) 1,177
+`tests/hooks/`: 1,409 cases. On Linux with bash 5 (CI, Ubuntu 24.04) 1,280
 pass and 129 are strict expected failures. On macOS with its default bash
-3.2, 1,172 pass, 2 skip (they need `/dev/full`, which macOS lacks) and 132
+3.2, 1,275 pass, 2 skip (they need `/dev/full`, which macOS lacks) and 132
 are expected failures — the same 129 plus three that only fail on bash
-3.2. (These counts were 1,254 cases, 1,122 and 1,117 passing and 132
-strict expected failures until 2026-10-22, below: the deployment port
-added 36 cases, the two owner decisions a net 16 more and took 3 cases off
-the expected-failure list. The new totals are computed from those
-changes, not yet confirmed by a pytest run.) Before the xfail list existed, the port was run test-for-test beside
+3.2. Both are pytest runs of `5aeb452`, the CI one in the `hook behaviour`
+job. (These counts were 1,254 cases, 1,122 and 1,117 passing and 132
+strict expected failures until 2026-10-22, below. The deployment port and
+the two owner decisions brought the suite to 1,397 cases and took 3 off
+the expected-failure list; the 1,306 this section gave for that state was
+computed from the changes and was wrong, as the first pytest run showed.
+The quote-aware `~[` check then added 12 more.) Before the xfail list existed, the port was run test-for-test beside
 the upstream suite at `bf327b2`, on macOS:
 
 - The 94 tests that fail upstream and pass here are every `configured`
