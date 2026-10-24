@@ -270,13 +270,13 @@ with `supervisor` itself. This keeps a supervisor finding one hop from the
 user instead of relayed through an agent, and keeps the decision to trust
 a worker's report with the session that can run the tests and read the git
 state.
-````
 
 Keep the briefs, worker reports and git evidence somewhere durable until
 the pull request merges, so a pairing can be re-run or audited. A
 temporary scratchpad may be wiped between sessions; the harness's own
 subagent transcripts are the fallback, and where those live is
 harness-specific.
+````
 
 ### 3. Verify
 
@@ -367,11 +367,13 @@ pinned the same way. The block to append:
 ````markdown
 ## Your model
 
-You run on {{MODEL}}. This is a deliberate choice, recorded here so it is
-not mistaken for an oversight: other agents run on cheaper models and you
-were kept on this one on purpose. Do not treat the difference as a bug to
-be fixed, and do not change it — agent configuration changes only on a
-direct instruction from {{OWNER}}.
+You run on {{MODEL}}, pinned in this file's frontmatter. This is a
+deliberate choice, recorded here so it is not mistaken for an oversight:
+other agents may inherit the session's model or be pinned to a different
+one, and you were pinned to this one on purpose, because a check is only
+worth as much as the model that runs it. Do not treat a difference from
+the other agents as a bug to be fixed, and do not change it — agent
+configuration changes only on a direct instruction from {{OWNER}}.
 ````
 
 ## Parsing the output: extract, don't assume

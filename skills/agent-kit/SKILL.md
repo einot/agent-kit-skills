@@ -434,7 +434,7 @@ because `test-author` cannot.
 
 `agent-kit-coder` adds a paragraph to this for its no-Bash build, and an
 optional *Dependencies* section; `agent-kit-supervisor` adds the
-supervisor protocol and a note on keeping the evidence it is given.
+supervisor protocol, which includes keeping the evidence it is given.
 **Recommended:** a *State machines and policies* section (explicit
 transition tables, pure permission policies, ADR-recorded exemptions),
 whose text and installer notes are in `agent-kit-architect`. Delete it for
@@ -486,10 +486,22 @@ them — which is the failure this kit was built to catch.
 "dispatch" means a real subagent dispatch; nothing here can be checked by
 reading a config file.
 
+**Run it from a new session, in the main checkout.** Agent definitions
+and hook settings are read when a session starts, so the session that
+wrote them cannot dispatch them: it fails with `Agent type 'test-author'
+not found`. They are also read from the main checkout, never from a
+worktree. So, after installing on a branch, keep that branch checked out
+in the main checkout, start a new session there, verify, and only then
+switch away; until the branch merges, a session on any other branch has
+no agents and no guards. A headless `claude -p` session loads the agents
+too and works well for this, but it needs a CLI that is logged in in that
+shell: a desktop app's login does not reach a CLI started from a shell.
+
 1. `bash -n` passes on both hooks, both are executable, and `jq` is
-   installed. `grep -n '{{\|``' .claude/agents/*.md` prints nothing: a
-   leftover placeholder or a doubled backtick means a substitution went
-   wrong, and installs have shipped both.
+   installed. `grep -n -E '\{\{|(^|[^`])``($|[^`])' .claude/agents/*.md`
+   prints nothing: a leftover placeholder or a doubled backtick means a
+   substitution went wrong, and installs have shipped both. (The pattern
+   skips the ```` ```json ```` fences several templates contain.)
 2. `coder` is denied an edit to a test file and to a spec file, and the
    refusal text comes from the path guard. A platform message about
    "allowed working directories" instead means the guard never ran.

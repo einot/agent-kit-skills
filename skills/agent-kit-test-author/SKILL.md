@@ -93,18 +93,23 @@ happen, not what an implementation happens to do.
 
 ## The one hard rule
 
-You cannot read the implementation you are testing. A path guard blocks
-Read/Grep/Glob anywhere under {{CODE_DIRS}}, except for the test
-directories and test kit listed below.
-
-The guard denies those trees *and every directory on the way down to
-them* — the package root, the package, and its source directory are all
-refused, not just the files beneath them. It has to: a `Grep` with
-`output_mode: content` pointed at an ancestor directory recurses into the
-subtree and returns the very implementation lines the guard exists to
-hide, so denying only the leaf paths made the guard trivially bypassable.
-An unscoped `Grep`/`Glob` with no `path` at all, or one pointing at the
-project root, is refused for the same reason.
+You cannot read the implementation you are testing. {{READ_POLICY_PARAGRAPH
+— the form matching the read policy wired in step 2. Allowlist
+(recommended): "A path guard on Read/Grep/Glob admits only the paths
+listed under *You can read* below and refuses everything else, the
+implementation included, without having to name it. An unscoped
+`Grep`/`Glob` with no `path` at all, or one pointing at the project root,
+is refused too, because it would search the whole tree." Denylist: "A
+path guard blocks Read/Grep/Glob anywhere under {{CODE_DIRS}}, except for
+the test directories and test kit listed below. The guard denies those
+trees *and every directory on the way down to them* — the package root,
+the package, and its source directory are all refused, not just the files
+beneath them. It has to: a `Grep` with `output_mode: content` pointed at
+an ancestor directory recurses into the subtree and returns the very
+implementation lines the guard exists to hide, so denying only the leaf
+paths made the guard trivially bypassable. An unscoped `Grep`/`Glob` with
+no `path` at all, or one pointing at the project root, is refused for the
+same reason."}}
 
 You **can read**:
 - {{SPEC_DIR}}, {{ADR_DIR}}, {{PROTOCOL_DIR}}, {{SCHEMA_DIR}} — your
@@ -138,12 +143,15 @@ your report instead of editing it; the session rules on it.
 ## What "from the spec" means in practice
 
 - A schema tells you the wire shape / event shape to assert against.
-- The spec section a module cites (visible in the module's own docstring
-  or package doc comment,
-  which you are allowed to read even though the rest of the file's
-  implementation is guarded — reading a stub file that's 90% docstring and
-  10% comments describing intent is expected) tells you the behavior to
-  test, not the code that (will) implement it.
+- Where a module cites the spec section it implements in a docstring or
+  package doc comment you are allowed to read (a stub file that is 90%
+  docstring and 10% comments describing intent is expected reading), that
+  section tells you the behavior to test, not the code that (will)
+  implement it.
+- Where the interface lives in a file you cannot read, your brief carries
+  the signatures you test: names, parameters, return values and raised
+  errors. Test against those exactly. If a signature you need is missing,
+  say so in your report rather than guessing at it or looking for it.
 - If you can't tell what the correct behavior is from the spec/ADRs/schema
   alone, that's a gap in the spec, not something to resolve by peeking at
   the implementation — flag it back to whoever spawned you so the
@@ -151,8 +159,11 @@ your report instead of editing it; the session rules on it.
 
 ## Conventions in this repo
 
-- Existing test files already cite the spec sections they cover — follow
-  that convention for new tests you add.
+- {{TEST_CITATION_CONVENTION — where existing tests already cite the
+  spec: "Existing test files already cite the spec sections they cover —
+  follow that convention for new tests you add." Where they do not yet:
+  "Cite, in each new test's docstring, the spec section (or the part of
+  `{{SPEC_ENTRY}}`) it covers."}}
 - {{TEST_LAYOUT_CONVENTION — where unit vs. integration vs. e2e vs. bench
   tests live, and the naming scheme.}}
 ````
@@ -352,6 +363,20 @@ does not prove the hook was reached.
 | `{{TESTKIT_BULLET}}` | The test-kit bullet, filled in, or delete the bullet | see the template |
 | `{{WRITE_SCOPE_SENTENCE}}` | One of the two sentences the template gives, by whether there is a test kit | see the template |
 | `{{SPEC_DIR}}` … `{{SCHEMA_DIR}}` | Doc trees the agent reads | `docs/spec/`, `docs/adr/`, `docs/protocol/`, `schemas/*.json` |
+| `{{READ_POLICY_PARAGRAPH}}` | The paragraph describing the read policy you wired: allowlist or denylist | the allowlist form |
+| `{{TEST_CITATION_CONVENTION}}` | Whether existing tests cite the spec: one of the two sentences the template gives | — |
+
+**A project without all four doc trees** rewrites the *You can read*
+bullet to name the trees that exist — for a small tool that may be
+`README.md` alone — rather than filling a slot with a path that is not
+there. See `agent-kit-architect`, which owns the same decision.
+
+**If the interface lives in the implementation file** (a single-module
+tool), this agent cannot read the signatures it tests. Either the
+interface moves into a module of its own that this agent may read, or
+every brief carries the signatures; the template's *What "from the spec"
+means* section tells the agent what to do with them. See
+`agent-kit-architect` for the choice.
 
 **Each deny glob needs a bare entry and a `/*` entry** — `packages` *and*
 `packages/*`. The bare entry is what stops an ancestor-directory search;
