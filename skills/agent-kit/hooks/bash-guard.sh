@@ -1203,8 +1203,14 @@ done
 # nothing is special and only a `'` ends the span; inside "..." a backslash
 # escapes the next character and a `"` ends the span; outside quotes a
 # backslash escapes the next character, a quote opens a span, and a
-# parenthesis is a hit. The command is refused on a hit, and when the scan
-# ends inside a quote.
+# parenthesis is a hit, as is a `~` directly followed by a `[`. The command
+# is refused on a hit, and when the scan ends inside a quote.
+#
+# `~[` goes through the same scan because zsh calls `zsh_directory_name`
+# only when neither the tilde nor the bracket is quoted or escaped:
+# `~"[x]"`, `~\[x]` and `"~[x]"` are literal text (verified in zsh 5.9).
+# A raw substring test refused them all, and with them a quoted pattern
+# such as `rg '~[a-z]' f`.
 #
 # The scan runs in jq, not in a bash loop, and that is a safety property,
 # not a style choice. A character-by-character bash loop over `${s:i:1}`
@@ -1241,7 +1247,7 @@ paren_outside_quotes() {
   local verdict
   if ! verdict="$(printf '%s' "$1" | jq -R -s -r '
       explode
-      | reduce .[] as $c ({st: "none", esc: false, hit: false};
+      | reduce .[] as $c ({st: "none", esc: false, tilde: false, hit: false};
           if .hit then .
           elif .esc then .esc = false
           elif .st == "single" then
@@ -1255,7 +1261,9 @@ paren_outside_quotes() {
              elif $c == 34 then .st = "double"
              elif $c == 92 then .esc = true
              elif ($c == 40 or $c == 41) then .hit = true
+             elif ($c == 91 and .tilde) then .hit = true
              else . end)
+            | .tilde = ($c == 126)
           end)
       | (.hit or .st != "none")' 2>/dev/null)"; then
     return 0
@@ -1263,14 +1271,10 @@ paren_outside_quotes() {
   [[ "$verdict" != "false" ]]
 }
 
-if [[ "$command_str" == *'('* || "$command_str" == *')'* ]]; then
+if [[ "$command_str" == *'('* || "$command_str" == *')'* || "$command_str" == *'~['* ]]; then
   if paren_outside_quotes "$command_str"; then
-    deny "bash guard: the command contains a parenthesis outside quotes, or an unterminated quote. Claude Code runs an approved command under the user's login shell, which is zsh on macOS, and zsh runs a command for =(cmd), for a glob qualifier such as *(e:cmd:) or *(+fn), and for other parenthesised forms that this guard cannot vet. Parentheses are allowed only inside quotes or escaped with a backslash -- jq 'del(.b)' and rg 'a(b)' are fine. Re-run it as a plain pipeline with no unquoted parenthesis; put any output you need into your report rather than into a file."
+    deny "bash guard: the command contains a parenthesis, or '~[', outside quotes, or an unterminated quote. Claude Code runs an approved command under the user's login shell, which is zsh on macOS, and zsh runs a command for =(cmd), for a glob qualifier such as *(e:cmd:) or *(+fn), for ~[name] (it calls the user's zsh_directory_name function), and for other forms that this guard cannot vet. Parentheses and ~[ are allowed only inside quotes or escaped with a backslash -- jq 'del(.b)', rg 'a(b)' and rg '~[a-z]' are fine. Re-run it as a plain pipeline with none of them unquoted, and name a directory as a plain path; put any output you need into your report rather than into a file."
   fi
-fi
-
-if [[ "$command_str" == *'~['* ]]; then
-  deny "bash guard: the command contains '~[', which zsh expands by calling the user's zsh_directory_name function, running code this guard cannot inspect. Name the directory as a plain path."
 fi
 
 # --- Split into segments ------------------------------------------------

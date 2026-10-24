@@ -126,7 +126,7 @@ it once on the machine that will run your agents.
 approved Bash command under your login shell, which is zsh on a Mac, not the
 bash the guard is written in. zsh runs a command for `=(cmd)`, for a glob
 qualifier such as `*(e:cmd:)`, and for `~[name]`, none of which bash reads that
-way, so `bash-guard.sh` refuses a parenthesis outside quotes and `~[`. Claude
+way, so `bash-guard.sh` refuses a parenthesis or `~[` outside quotes. Claude
 Code's own shell setup may also define `grep`, `find` and `rg` as functions
 that run ugrep, bfs and ripgrep (observed with `whence -w`/`functions` in a
 Bash tool call on macOS), so the guard refuses ugrep's command-running and
