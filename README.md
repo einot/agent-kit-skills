@@ -39,29 +39,52 @@ directory, a Bash command over 2,048 bytes, and a NUL byte anywhere. Tested
 by dispatch against the previous version of this kit, a `test-author`
 agent read implementation source twice — once through a coverage report,
 once through a `Grep` path containing `..` — and wrote a file into the
-architect's spec tree. All three are refused now. See `VERIFICATION.md`. Each skill still carries everything
-else it needs: the agent definition to write, the `settings.json` entry
-that wires its guard, the placeholder table for adapting it, and a
-verification checklist. Nothing fetches anything at install time.
+architect's spec tree. All three are refused now. See `VERIFICATION.md`.
 
-## Install
+Each skill carries everything else it needs: the agent definition to
+write, the `settings.json` entry that wires its guard, the placeholder
+table for adapting it, and a verification checklist. The project ends up
+with its own copies; nothing is fetched while the agents run.
 
-Unzip into a project (or into `~/.claude/skills/` to have the kit
-available everywhere):
+## Install: ask Claude to incorporate it
 
-```bash
-unzip agent-kit-skills.zip
-mkdir -p <project>/.claude/skills
-cp -r agent-kit-skills/skills/* <project>/.claude/skills/
-```
+The skills are instructions for adapting the kit to a project, not files
+that work where they are dropped. So the way to install it is to open
+Claude Code in your project and ask it to incorporate the kit from this
+repository:
 
-Then, in that project, invoke `agent-kit` to install all six agents, the
-shared hooks, the `settings.json` wiring and the `CLAUDE.md` governance
-sections — or invoke a single `agent-kit-<agent>` skill to install just
-that one.
+> Incorporate the agent kit from https://github.com/einot/agent-kit-skills
+> into this project. Clone the repository, read `skills/agent-kit/SKILL.md`,
+> and follow its Install section.
 
-Requires `bash` and `jq` on the machine running the session (both guards
-are bash hooks that parse their JSON payload with `jq`).
+Claude then clones the repository outside your project, reads the
+`agent-kit` skill and the six agent skills it points to, and works through
+the install steps:
+
+1. copies `path-guard.sh` and `bash-guard.sh` into `.claude/hooks/`,
+2. writes the guard wiring into `.claude/settings.json`,
+3. writes the six agent definitions into `.claude/agents/`, filling each
+   skill's placeholders (source and test directories, gate commands) from
+   what it finds in your project, and asking you for what it cannot find,
+4. adds the governance sections to `CLAUDE.md`.
+
+To install a single agent, name its skill instead, for example "…and
+follow `skills/agent-kit-test-author/SKILL.md`". To get a version you can
+reproduce, name a commit or tag as well ("…at commit `<sha>`").
+
+Ask for a **clone**, not a web fetch. The hooks have to arrive byte for
+byte, and a web fetch can hand Claude a processed version of a page
+rather than the file; a guard that has been paraphrased is not the guard
+tested here.
+
+When it is done, review the diff like any other change, with
+`.claude/settings.json` first, since that is what decides whether the
+guards fire at all (see the next section). Then have Claude run
+`agent-kit`'s *Verify the whole system*: a real dispatch that each guard
+must refuse is the only proof the install works.
+
+The machine running the session needs `bash` and `jq`: both guards are
+bash hooks that parse their JSON payload with `jq`.
 
 ## The one thing to get right
 
@@ -204,6 +227,6 @@ these are which.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The point of this bundle is that you copy it
-into your own project and adapt it, so the license is the permissive one
-that lets you.
+MIT — see [LICENSE](LICENSE). The point of this bundle is that it is
+copied into your own project and adapted there, so the license is the
+permissive one that lets you.
