@@ -417,6 +417,19 @@ guard. For another toolchain, the question to ask of every file it reads
 is: *would creating or editing this make a gate run something the command
 line does not show?*
 
+What group 4 leaves writable is as deliberate as what it denies.
+`pyproject.toml`, a root `ruff.toml` and `Makefile` are configuration a
+reviewer already reads: an edit to one shows in the diff that the session
+and `supervisor` review, so `coder` keeps them. What is denied is what
+silently takes precedence over them — `pytest.ini` and `pytest.toml` over
+`pyproject.toml`'s `[tool.pytest.ini_options]`, `.ruff.toml` over
+`ruff.toml`, a nested `ruff.toml` over the root one for its subtree,
+`GNUmakefile` and `makefile` over `Makefile` — and what a tool picks up by
+name when nothing points at it. If a gate's settings in `pyproject.toml`
+must not change unreviewed at all (`addopts` there can load a plugin),
+deny `pyproject.toml` too, and accept that dependency and packaging
+changes then go through the session.
+
 The test globs follow the runner's discovery pattern, not a convention.
 pytest collects `test_*.py` and `*_test.py`; `python -m unittest`
 discovers `test*.py`, which is wider, so a unittest project denies `test*.py
