@@ -542,6 +542,12 @@ WRITE_CASES = [
     ("coder", NESTED_TEST_FILE, False),
     ("coder", SPEC_FILE, False),
     ("coder", SCHEMA_FILE, False),
+    # The root README is architect's (on its allowlist in the fixture), so
+    # it is denied to the coder: one writer per kind of artifact. A package's
+    # own README is on no other agent's list and stays the coder's.
+    ("coder", "README.md", False),
+    ("coder", "Readme.md", False),
+    ("coder", "packages/acme-core/README.md", True),
     # A case variant names the same file on a case-insensitive volume (the
     # macOS and Windows default), so a denylist folds case and the coder's
     # fence must hold against it. An allowlist does NOT fold case: the
@@ -611,7 +617,6 @@ WRITE_CASES = [
     ("coder", "ruff.toml", True),
     ("coder", ".commit-msg", True),
     ("coder", "deploy/docker-compose.yml", True),
-    ("coder", "README.md", True),
     ("coder", "CHANGES", True),
     ("coder", ".github/workflows/ci.yml", True),
     ("coder", "services/trie/src/acme/trie/query/app.py", True),

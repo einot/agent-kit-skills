@@ -111,7 +111,7 @@ Two consequences worth knowing before you trust an install:
 
 ## The guards are tested here
 
-`tests/hooks/` runs both hooks as real subprocesses — 1,409 cases once
+`tests/hooks/` runs both hooks as real subprocesses — 1,411 cases once
 parametrised — feeding each a `PreToolUse` payload and asserting on the
 exit status and the refusal text. The "configured" tests run every policy
 in `tests/hooks/fixtures/settings.json`, a complete instantiation of the

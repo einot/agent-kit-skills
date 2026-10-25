@@ -131,7 +131,7 @@ fails to parse is still the wrong default.
 
 ### The behaviour suite
 
-`tests/hooks/`: 1,409 cases. On Linux with bash 5 (CI, Ubuntu 24.04) 1,280
+`tests/hooks/`: 1,411 cases. At `5aeb452` there were 1,409: on Linux with bash 5 (CI, Ubuntu 24.04) 1,280
 pass and 129 are strict expected failures. On macOS with its default bash
 3.2, 1,275 pass, 2 skip (they need `/dev/full`, which macOS lacks) and 132
 are expected failures — the same 129 plus three that only fail on bash
@@ -141,7 +141,10 @@ strict expected failures until 2026-10-22, below. The deployment port and
 the two owner decisions brought the suite to 1,397 cases and took 3 off
 the expected-failure list; the 1,306 this section gave for that state was
 computed from the changes and was wrong, as the first pytest run showed.
-The quote-aware `~[` check then added 12 more.) Before the xfail list existed, the port was run test-for-test beside
+The quote-aware `~[` check then added 12 more.) Giving the root
+`README.md` to `architect` alone, and denying it to `coder`, added 2 more:
+on this Mac that run is 1,277 passed, 2 skipped and 132 expected
+failures. Before the xfail list existed, the port was run test-for-test beside
 the upstream suite at `bf327b2`, on macOS:
 
 - The 94 tests that fail upstream and pass here are every `configured`
