@@ -147,10 +147,14 @@ you so the architect or test-author can address it.
 
 ## Conventions in this repo
 
-- Every module you fill in already has a module docstring or package doc
-  comment citing the spec section(s) it implements (e.g. `Spec: section 10, section 11`) —
-  implement to that citation, and if you think the citation is wrong, flag
-  it rather than quietly ignoring it.
+- {{SPEC_CITATION_BULLET — where modules already cite the spec: "Every
+  module you fill in already has a module docstring or package doc comment
+  citing the spec section(s) it implements (e.g. `Spec: section 10,
+  section 11`) — implement to that citation, and if you think the citation
+  is wrong, flag it rather than quietly ignoring it." Where they do not
+  yet: "Your brief names the spec section (or the part of
+  `{{SPEC_ENTRY}}`) each change implements — implement to it, and if you
+  think it is wrong, flag it rather than quietly ignoring it."}}
 - Match the existing code style ({{STYLE_CONFIG}}).
 - You cannot build, format, run tests or commit: you have no Bash. Write
   code you are confident compiles, formatted the way {{FORMATTER}} would
@@ -355,6 +359,7 @@ agent the policy that counts is the one in the **main** checkout.
 | `{{FSM_PACKAGE}}` / `{{POLICY_PACKAGE}}` | The state-machine and policy packages, the same values as in `CLAUDE.md`'s *State machines and policies* section (see `agent-kit-architect`); delete the bullet if the project has no such section | `internal/fsm`, `internal/policy` |
 | `{{MAKE_GATE_TARGETS}}` | Tripwire only: `make` targets the coder may run | `typecheck` |
 | `{{PROJECT_SPECIFIC_CONVENTIONS}}` | Standing conventions, or delete | — |
+| `{{SPEC_CITATION_BULLET}}` | Whether modules already cite the spec: one of the two sentences the template gives (the same choice as `agent-kit-architect`'s `{{SPEC_CITATION_CONVENTION}}`) | — |
 
 Substitute bare values. `{{CODE_DIRS}}` and `{{SPEC_ENTRY}}` sit in running
 prose and inside backticks respectively, so a value that carries its own
@@ -413,6 +418,31 @@ filled in for a Python project on uv, and CI proves each entry against the
 guard. For another toolchain, the question to ask of every file it reads
 is: *would creating or editing this make a gate run something the command
 line does not show?*
+
+What group 4 leaves writable is as deliberate as what it denies.
+`pyproject.toml`, a root `ruff.toml` and `Makefile` are configuration a
+reviewer already reads: an edit to one shows in the diff that the session
+and `supervisor` review, so `coder` keeps them. What is denied is what
+silently takes precedence over them — `pytest.ini` and `pytest.toml` over
+`pyproject.toml`'s `[tool.pytest.ini_options]`, `.ruff.toml` over
+`ruff.toml`, a nested `ruff.toml` over the root one for its subtree,
+`GNUmakefile` and `makefile` over `Makefile` — and what a tool picks up by
+name when nothing points at it. If a gate's settings in `pyproject.toml`
+must not change unreviewed at all (`addopts` there can load a plugin),
+deny `pyproject.toml` too, and accept that dependency and packaging
+changes then go through the session.
+
+The test globs follow the runner's discovery pattern, not a convention.
+pytest collects `test_*.py` and `*_test.py`; `python -m unittest`
+discovers `test*.py`, which is wider, so a unittest project denies `test*.py
+*/test*.py` (a `testx.py` at the root would otherwise be run by the gate).
+`python -m` also puts the working directory first on `sys.path`, so a
+root-level module named after the runner (`unittest unittest/* unittest.py`
+for unittest, as `pytest pytest/*` above) or after an optional dependency
+the code imports replaces the real one. Deny the ones a gate is known to
+import. A root file named after *any* module the code imports cannot be
+enumerated: that case rests on `supervisor`, which sees the new file in
+`git status`.
 
 For a Go project, for instance, the group-4 question names `go.work` (and
 `*/go.work`), which changes which module sources a build compiles.

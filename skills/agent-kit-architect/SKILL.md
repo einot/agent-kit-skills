@@ -104,6 +104,9 @@ from. For a unit of work (e.g. one epic issue in a milestone):
    it and reports a problem with it instead of editing it.
    - For **test-author**: what each test must demonstrate, drawn from the
      spec — never from the implementation, which test-author does not read.
+     Where test-author cannot read the interface either, because it lives
+     in the implementation file, include the signature of everything each
+     test calls: names, parameters, return values and raised errors.
    - For **coder**: the interface to implement against and the tests it
      must satisfy.
    - For **reviewer** / **security-auditor**: the diff to examine and the
@@ -132,10 +135,13 @@ it is a finding regardless of how good the reason seemed.
 
 ## Conventions in this repo
 
-- Every module docstring or package doc comment cites the spec
-  section(s) it implements, e.g.
-  `Spec: section 6, section 7`. Keep the spec's section index in sync when
-  you touch what a section maps to.
+- {{SPEC_CITATION_CONVENTION — where the repo already follows it:
+  "Every module docstring or package doc comment cites the spec
+  section(s) it implements, e.g. `Spec: section 6, section 7`. Keep the
+  spec's section index in sync when you touch what a section maps to."
+  Where it does not yet: "Modules and tests do not cite spec sections
+  yet. When you write or amend a spec section, say in your report which
+  modules and tests it covers, so the briefs can carry the citation."}}
 - {{WORK_BREAKDOWN_CONVENTION — e.g. "The repo's milestones/issues already
   break the build into epics per package/service; use those as your default
   unit of work rather than re-deriving scope from scratch."}}
@@ -299,6 +305,7 @@ guard works is a real dispatch that a real policy refused.
 | `{{POLICY_PACKAGE}}` | State machines section: where pure permission policies live | `internal/policy`, `core/policy` |
 | `{{FSM_POLICY_ADR}}` | State machines section: the ADR linking a transition to a policy | `docs/adr/00NN-state-machines-and-policies.md`, or "ADR-00NN (pending)" |
 | `{{WORK_BREAKDOWN_CONVENTION}}` | How work is sliced | milestones/epics, roadmap file, … |
+| `{{SPEC_CITATION_CONVENTION}}` | Whether modules and tests already cite spec sections: one of the two sentences the template gives | the "not yet" sentence for a project with no spec |
 
 **Substitute bare values.** `{{SPEC_DIR}}`, `{{ADR_DIR}}`,
 `{{PROTOCOL_DIR}}`, `{{SCHEMA_DIR}}` and `{{SPEC_ENTRY}}` sit inside
@@ -317,6 +324,15 @@ internal/contract/*`), deny it in `coder`'s `{{DENY_GLOBS}}`, and let
 the path guard can enforce, which is the reason to keep the contract in a
 package of its own.
 
+**If the contract and the implementation are one file** — a single-module
+tool whose tests call functions defined in the very file `test-author`
+must not read — there is no boundary to split along. Either move the
+public interface into a module of its own, or accept that `test-author`
+cannot see it: then every brief to `test-author` carries the signatures
+it tests, which `architect` can copy because it reads the code. Say which
+in both agent files, so `test-author` treats a missing signature as a
+brief to send back, not a file to go and read.
+
 **`CHANGES`.** If the governance template's `CHANGES` section is in use,
 decide which agent writes it and say so once. One working arrangement:
 `architect` may write it (add `CHANGES` to `{{DOC_GLOBS}}` and keep the
@@ -334,8 +350,16 @@ Glob semantics are bash `[[ str == pattern ]]`, so a bare `*` crosses `/`:
 `docs/*` matches `docs/spec/overview.md`. Keep the allowlist narrow —
 every path in it is a path the architect can rewrite unreviewed.
 
-If the project has no spec yet, the architect's first dispatch is to write
-one; point `{{SPEC_DIR}}` at where it will live and say so in the brief.
+**If the project has no spec, ADRs, protocol or schemas yet.** The
+template names four doc trees as if each exists. Do not fill a slot with
+a tree that is not there: rewrite the bullets in *What you own* (and the
+matching *You can read* bullet in `test-author`) to name what really is —
+for a small tool, often just `README.md` and its usage text — and add the
+trees as they come into being. If the architect's first dispatch is to
+write a spec, point `{{SPEC_DIR}}` at where it will live and say so in the
+brief. Pick the "not yet" form of `{{SPEC_CITATION_CONVENTION}}` too: a
+convention the repo does not follow, stated as a fact, sends every agent
+looking for citations that are not there.
 
 Drop `WebFetch`/`WebSearch` from `tools:` if the project must not reach the
 network; the "External references" section then goes too.
