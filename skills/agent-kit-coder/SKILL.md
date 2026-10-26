@@ -386,7 +386,9 @@ project; the fourth depends on your toolchain.
    sit beside the code and are recognised by suffix (`*_test.go`,
    `*.test.ts`), deny that suffix too — in a denylist a leading `*` is
    what you want — and deny `CHANGES` if architect owns it (see the
-   `CHANGES` section of the governance template).
+   `CHANGES` section of the governance template). Deny `README.md` when
+   architect owns it, as in the reference wiring (see
+   `agent-kit-architect`); a package's own README stays yours.
 2. **Agent configuration.** `.claude .claude/* */.claude */.claude/*
    CLAUDE.md */CLAUDE.md CLAUDE.local.md */CLAUDE.local.md .mcp.json
    */.mcp.json`. An agent that can rewrite `settings.json` can rewrite its

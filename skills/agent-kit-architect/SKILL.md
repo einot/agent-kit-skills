@@ -338,6 +338,14 @@ decide which agent writes it and say so once. One working arrangement:
 `architect` may write it (add `CHANGES` to `{{DOC_GLOBS}}` and keep the
 `{{CHANGES_OWNERSHIP}}` line), and `coder` is denied it.
 
+**`README.md`.** Like `CHANGES`, it has one writer, and you decide which
+once per project. In the reference wiring it is `architect`'s: it is in
+`{{DOC_GLOBS}}` and in `coder`'s denylist, because a README usually states
+the interface — usage, flags, `--help` text — and a change to it is a
+change to the contract. If the README is closer to the code than to the
+contract, give it to `coder` instead: drop it from `{{DOC_GLOBS}}` and from
+`coder`'s denylist. Never leave it on both lists.
+
 Glob semantics are bash `[[ str == pattern ]]`, so a bare `*` crosses `/`:
 `docs/*` matches `docs/spec/overview.md`. Keep the allowlist narrow —
 every path in it is a path the architect can rewrite unreviewed.
