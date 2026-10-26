@@ -86,7 +86,10 @@ in the main checkout with the install branch checked out. The session
 that did the install cannot run it, because agents and hooks are loaded
 when a session starts, and they are read from the main checkout, never
 from a worktree. A headless `claude -p` session works too, if the CLI in
-that shell is logged in.
+that shell is logged in. If the new session will not start because the
+workspace "requires trust approval", and the desktop app shows no dialog
+for it, run `claude` once in that folder from a terminal, accept the
+trust prompt, and exit.
 
 The machine running the session needs `bash` and `jq`: both guards are
 bash hooks that parse their JSON payload with `jq`. Without `jq` they
