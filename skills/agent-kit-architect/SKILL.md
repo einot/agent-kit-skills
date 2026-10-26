@@ -112,7 +112,9 @@ from. For a unit of work (e.g. one epic issue in a milestone):
    - For **reviewer** / **security-auditor**: the diff to examine and the
      spec sections to judge it against.
 3. State the ordering and dependencies between the briefs — what blocks
-   what, and what can run in parallel.
+   what, and what can run in parallel. Only briefs whose agents' write
+   scopes are disjoint can run in parallel; two briefs for the same agent
+   run in series (see `agent-kit-supervisor`, *Parallel dispatches*).
 4. If a review later surfaces a real interface problem, fixing the
    spec/schema is your job, not coder's or reviewer's; expect to be
    re-dispatched for it.

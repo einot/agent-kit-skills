@@ -67,7 +67,9 @@ Each time you're invoked, you'll receive:
    made, commands run) — treat this report as a claim to verify against
    the actual files, not as fact.
 3. `git status --porcelain` and `git diff`, collected by the dispatching
-   session, stated to cover exactly this dispatch and nothing before it.
+   session, stated to cover exactly this dispatch and nothing before it —
+   or, when other dispatches ran at the same time, this worker's slice of
+   that evidence (see *Parallel dispatches* below).
 4. The baseline commit the worker started from, so you can see what that
    claim of coverage rests on.
 
@@ -88,6 +90,20 @@ For a worker resumed for a second round, the git evidence should be the
 diff between the snapshot the session took before resuming it and now.
 If you are given only the cumulative diff, say which changes you could
 not attribute to this round, as an `unverified` finding.
+
+**Parallel dispatches.** When the session ran other dispatches at the
+same time, it says so, names each with its write scope, and gives you
+this worker's slice of the evidence: the changes under this worker's
+write scope. It also gives you every change under no concurrent agent's
+scope. Attribute by scope, because the guards make the scopes disjoint:
+a change under this worker's scope is this worker's, and you judge it
+against the brief as usual; a change under another concurrent agent's
+scope belongs to that agent's pairing and is not a finding here. A change
+under no concurrent agent's scope is a `scope-violation`: name the path
+and say that no agent in the batch may write there, so either a guard
+failed or something outside the batch changed it. If the note names no
+scopes, or the slices overlap, you cannot attribute anything: say so as
+an `unverified` finding.
 
 If the git evidence is missing, say so as an `unverified` finding and
 answer only what you can. Do not fall back on ambient context — a git
@@ -201,6 +217,35 @@ keeps the structural exemption that makes it trustworthy. For a worker
 running under `isolation: worktree`, collect the evidence **from that
 worker's worktree** — the main checkout shows nothing, because the changes
 are not there.
+
+**Parallel dispatches.** Dispatches may run at the same time only when
+their write scopes are disjoint: no path that two of them may write,
+judged by the guards in `.claude/settings.json`, not by the briefs. In
+the reference wiring `coder` (in its own worktree), `test-author` and
+`architect` are disjoint and may run together, and read-only agents
+with no Bash can run beside anything. Run dispatches in series when two
+could touch the same paths:
+
+- two dispatches to the same write-capable agent;
+- an agent and your own edits to paths that agent may write;
+- any agent whose writes no guard fences — a `coder` that keeps Bash, or
+  a `security-auditor` with Bash. Bash can write anywhere, so its scope
+  overlaps every other.
+
+Snapshot the main checkout before the batch starts and after every
+dispatch in it has finished. Then pair each dispatch on its own, giving
+`supervisor`:
+
+- **its slice of the evidence:** the `git status --porcelain --ignored`
+  lines and `git diff` hunks under that agent's write scope, or, for a
+  worktree agent, its worktree's own evidence;
+- **every change under no concurrent agent's scope**, unsliced. No agent
+  in the batch may make such a change, so it goes to every pairing;
+- **a note naming the concurrent dispatches** and the write scope of
+  each.
+
+Probe dispatches stay in series: a probe attempts writes outside its
+agent's scope on purpose, so its scope is not disjoint from anything.
 
 A probe dispatch — one sent to test a guard, or to see whether an agent
 can do something — is a dispatch like any other, and is paired the same
