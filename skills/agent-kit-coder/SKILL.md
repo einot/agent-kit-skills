@@ -460,7 +460,7 @@ session applies the diff. State that in the brief; a worker that does not
 know is a worker that guesses. In the no-Bash build there is only one
 answer: the session runs the merge bar and commits in the worktree.
 
-Three operating notes, each observed rather than designed:
+Four operating notes, each observed rather than designed:
 
 - **Resume, don't refork.** A fresh `coder` worktree was cut from the
   default branch, not from whatever branch the session had checked out. A
@@ -468,7 +468,12 @@ Three operating notes, each observed rather than designed:
   `coder`, whose worktree still holds it; a new dispatch would start
   without it. Before resuming, snapshot the worktree (commit it, or save
   `git diff`) so `supervisor` can be given exactly the second round's
-  changes.
+  changes. The same goes for work on a feature branch: the first `coder`
+  dispatch for it still starts from the default branch, so it cannot see
+  the branch's unmerged changes. Check the worktree's base in the git
+  evidence. If the work depends on those changes, land them first, or
+  resume a `coder` whose worktree already has them. Then move the result
+  onto the feature branch by cherry-pick.
 - **Reconcile by git, not by cross-worktree edits.** In the environment
   observed, the session was refused edits to files in another worktree of
   the same repository. That is harness behaviour, not something this kit
@@ -478,6 +483,11 @@ Three operating notes, each observed rather than designed:
   does. Without it, a `coder` could rewrite the file that tells git where
   its worktree's repository is, which changes what `git status` and
   `git diff` report — the evidence `supervisor` is handed.
+- **Ignore the worktrees.** They are created under `.claude/worktrees/`,
+  which nothing ignores by default, so the main checkout's `git status`
+  shows `?? .claude/worktrees/` in every evidence snapshot. Add
+  `.claude/worktrees/` to `.gitignore` when installing `coder`. The
+  evidence for a `coder` dispatch comes from its own worktree in any case.
 
 Keeping Bash on this agent is what lets it run the tests. Unfenced, it is
 also a way around every other rule in this file. The next section is the
