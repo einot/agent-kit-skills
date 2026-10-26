@@ -79,12 +79,20 @@ tested here.
 
 When it is done, review the diff like any other change, with
 `.claude/settings.json` first, since that is what decides whether the
-guards fire at all (see the next section). Then have Claude run
-`agent-kit`'s *Verify the whole system*: a real dispatch that each guard
-must refuse is the only proof the install works.
+guards fire at all (see the next section). Then run `agent-kit`'s
+*Verify the whole system*: a real dispatch that each guard must refuse is
+the only proof the install works. Run it from a **new** session, started
+in the main checkout with the install branch checked out. The session
+that did the install cannot run it, because agents and hooks are loaded
+when a session starts, and they are read from the main checkout, never
+from a worktree. A headless `claude -p` session works too, if the CLI in
+that shell is logged in.
 
 The machine running the session needs `bash` and `jq`: both guards are
-bash hooks that parse their JSON payload with `jq`.
+bash hooks that parse their JSON payload with `jq`. Without `jq` they
+block the top-level session's own Read, Edit and Write calls as well,
+because every call is checked for shape before the guard looks at which
+agent made it.
 
 ## The one thing to get right
 

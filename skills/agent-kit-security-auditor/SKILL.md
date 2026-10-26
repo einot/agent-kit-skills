@@ -67,8 +67,24 @@ audit.
 ### 1. Write `.claude/agents/security-auditor.md`
 
 Replace every `{{...}}` placeholder (see *Adapt* below) before writing.
-The `Bash` tool, the `## Bash` section and the `skills:` key are all
-optional — delete them for the no-Bash build.
+
+The template is the **fenced-Bash** build. For the **no-Bash** build, the
+default, make five edits:
+
+1. In `tools:`, drop `Bash`.
+2. In `description:`, drop "and Bash fenced by a guard hook to read-only
+   inspection tooling", and drop the `# Bash guard` comment.
+3. In the first paragraph, replace "and a fenced Bash (see "Bash" below)"
+   with "and no Bash".
+4. In *Preloaded skill*, replace "and your Bash cannot execute target code
+   (see below)" with "and you have no Bash".
+5. Delete the `## Bash` section.
+
+Keep *What you cannot settle*: both builds report `needs-validation`.
+
+The `skills:` key and the *Preloaded skill* section do not depend on
+Bash. Keep both when a security methodology skill is installed (user-level
+or vendored), and delete both when none is.
 
 ````markdown
 ---
@@ -116,6 +132,16 @@ Two limits override anything the skill says about how to run:
   specified in "Output format" — not the skill's own report schema, and
   never as prose.
 
+## What you cannot settle
+
+You never execute the project's own code — its test suite, a package
+manager, a service entrypoint. Executing target-controlled code requires
+an OS-enforced sandbox, and this environment has none. So when a
+candidate finding can only be settled by executing something, do not
+try: report it with the **needs-validation** disposition, naming the
+missing sandbox capability and the safe validation plan someone with a
+sandbox should follow.
+
 ## Bash
 
 You have Bash, fenced by `.claude/hooks/bash-guard.sh`, a default-deny
@@ -149,8 +175,8 @@ Denied: anything that writes, anything that mutates git state, arbitrary
 interpreters (`python3`, `awk`, `sed -e`, `node -e`, `bash -c`, `xargs`),
 package installation, and network access.
 
-The shell metacharacters `$`, `` ` ``, `{`, `}`, `>`, `<`, a lone `&` and
-newline are refused anywhere in a command, because bash rewrites a command
+The shell metacharacters `$`, a backtick, `{`, `}`, `>`, `<`, a lone `&`
+and newline are refused anywhere in a command, because bash rewrites a command
 after the guard has inspected it — brace expansion was a real bypass here,
 not a hypothetical one. `&&`, `||`, `|` and `;` are allowed, as
 separators: the guard splits the command on them and checks every segment
@@ -175,12 +201,8 @@ costs some syntax, so use these instead:
 - jq: `jq .name`, `jq .a.b`, `jq 'with_entries(select(...))'`, `jq 'del(.b)'`
 
 Running the project's own code — its test suite, a package manager, a
-service entrypoint — is denied too, and deliberately. Executing
-target-controlled code requires an OS-enforced sandbox, and this
-environment has none. So when a candidate finding can only be settled by
-executing something, do not try: report it with the **needs-validation**
-disposition, naming the missing sandbox capability and the safe validation
-plan someone with a sandbox should follow.
+service entrypoint — is denied too, and deliberately: see *What you
+cannot settle* above.
 
 A guard denial is an answer about your role, not an obstacle; its message
 names the workaround where one exists. If you believe a denial was wrong,
@@ -390,7 +412,26 @@ Pin with a floating alias (`model: opus`), never a versioned id: a
 versioned pin goes stale silently when a newer model ships. An agent with
 no `model:` inherits the session's model, so pinning it also makes it
 ignore a deliberate session switch — which here is the point. `effort:`
-(`low`, `medium`, `high`, `xhigh`, `max`) can be pinned the same way.
+(`low`, `medium`, `high`, `xhigh`, `max`) can be pinned the same way. A
+ready-made block, to append to the agent file:
+
+````markdown
+## Your model
+
+You run on {{MODEL}}, pinned in this file's frontmatter. This is
+deliberate and recorded here so a later reader does not "fix" the
+inconsistency with the other agents, which may inherit the session's
+model. Security review rewards a strong model: a weaker one produces a
+plausible-looking list of non-issues that costs more to triage than it
+saves, and can bury the one real issue under them.
+
+Do not change this, and do not treat the difference from the other agents
+as an oversight. Agent configuration changes only on a direct instruction
+from {{OWNER}}.
+````
+
+`{{MODEL}}` names the alias in words ("the newest Opus model"); `{{OWNER}}`
+is whoever decides agent configuration ("the repo owner", "the user").
 
 ## Parsing the output: extract, don't assume
 
